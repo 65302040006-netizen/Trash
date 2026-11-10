@@ -1,0 +1,6 @@
+{
+  "name": "Trash Point - ระบบสะสมคะแนนขยะเพื่อโรงเรียนสีเขียว",
+  "description": "เว็บแอปพลิเคชัน Trash Point ระบบสะสมคะแนนจากการเก็บและคัดแยกขยะสำหรับโรงเรียน สะสมแต้มแลกของรางวัล รับเกียรติบัตร และสร้างจิตสำนึกรักษ์สิ่งแวดล้อม",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

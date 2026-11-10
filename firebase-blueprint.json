@@ -1,0 +1,178 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Student or school staff profile with eco points balance and badge status",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "className": { "type": "string" },
+        "number": { "type": "string" },
+        "studentId": { "type": "string" },
+        "avatar": { "type": "string" },
+        "role": { "type": "string", "enum": ["student", "reviewer", "admin"] },
+        "totalEarned": { "type": "number" },
+        "balance": { "type": "number" },
+        "totalPieces": { "type": "number" },
+        "certificateEarned": { "type": "boolean" },
+        "disabled": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["uid", "name", "role", "totalEarned", "balance"]
+    },
+    "Location": {
+      "title": "Location",
+      "description": "Campus trash drop-off and collection spot with assigned QR code",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "qrCode": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "qrCode", "active"]
+    },
+    "Submission": {
+      "title": "Submission",
+      "description": "Evidence submission of collected trash with before/after photos",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "className": { "type": "string" },
+        "type": { "type": "string", "enum": ["general", "recycle", "paper", "other"] },
+        "isRecycle": { "type": "boolean" },
+        "pieces": { "type": "number" },
+        "approvedPieces": { "type": "number" },
+        "locationId": { "type": "string" },
+        "locationName": { "type": "string" },
+        "beforePhoto": { "type": "string" },
+        "afterPhoto": { "type": "string" },
+        "imageHash": { "type": "string" },
+        "properlyDisposed": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "points": { "type": "number" },
+        "reviewedBy": { "type": "string" },
+        "reviewerName": { "type": "string" },
+        "reviewedAt": { "type": "string" },
+        "rejectReason": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "userName", "type", "pieces", "locationName", "beforePhoto", "afterPhoto", "status"]
+    },
+    "Reward": {
+      "title": "Reward",
+      "description": "Redeemable gifts and stationery items for students",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "icon": { "type": "string" },
+        "cost": { "type": "number" },
+        "stock": { "type": "number" },
+        "month": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["name", "cost", "stock", "active"]
+    },
+    "Redemption": {
+      "title": "Redemption",
+      "description": "Record of a student redeeming a prize with QR pickup code",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "className": { "type": "string" },
+        "rewardId": { "type": "string" },
+        "rewardName": { "type": "string" },
+        "cost": { "type": "number" },
+        "code": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "delivered"] },
+        "createdAt": { "type": "string" },
+        "deliveredBy": { "type": "string" },
+        "deliveredAt": { "type": "string" }
+      },
+      "required": ["userId", "rewardId", "rewardName", "cost", "code", "status"]
+    },
+    "Mission": {
+      "title": "Mission",
+      "description": "Daily green challenges with bonus points",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "targetType": { "type": "string" },
+        "targetCount": { "type": "number" },
+        "bonusPoints": { "type": "number" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["title", "targetType", "targetCount", "bonusPoints", "active"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Notification messages for users",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "type", "title", "message", "read"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Global school game rules and scoring limits",
+      "type": "object",
+      "properties": {
+        "generalMin": { "type": "number" },
+        "generalPerPiece": { "type": "number" },
+        "recycleMin": { "type": "number" },
+        "recyclePerPiece": { "type": "number" },
+        "certificateTarget": { "type": "number" },
+        "dailySubmitLimit": { "type": "number" },
+        "maxPiecesPerSubmit": { "type": "number" },
+        "announcement": { "type": "string" }
+      },
+      "required": ["generalMin", "recycleMin", "certificateTarget"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and accumulated points"
+    },
+    "/locations/{locationId}": {
+      "schema": "Location",
+      "description": "School collection locations with QR codes"
+    },
+    "/submissions/{submissionId}": {
+      "schema": "Submission",
+      "description": "Trash collection evidence and approval state"
+    },
+    "/rewards/{rewardId}": {
+      "schema": "Reward",
+      "description": "Prize inventory catalog"
+    },
+    "/redemptions/{redemptionId}": {
+      "schema": "Redemption",
+      "description": "Prize redemption requests and fulfillment tokens"
+    },
+    "/missions/{missionId}": {
+      "schema": "Mission",
+      "description": "Daily green missions"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notification feed"
+    },
+    "/settings/{settingId}": {
+      "schema": "Setting",
+      "description": "App scoring rules and settings"
+    }
+  }
+}
