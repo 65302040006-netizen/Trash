@@ -60,9 +60,9 @@ export const DEFAULT_GUEST_PROFILE: UserProfile = {
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(DEFAULT_GUEST_PROFILE);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [role, setRole] = useState<UserRole>('student');
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(true);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   // Initialize seed data on startup
@@ -150,9 +150,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
       } else {
         if (unsubProfile) unsubProfile();
-        // Fall back to active guest profile so app is immediately visible and usable
-        setProfile((prev) => prev || DEFAULT_GUEST_PROFILE);
-        setRole((prev) => prev || 'student');
+        setProfile(null);
+        setRole('student');
         setLoading(false);
       }
     });
@@ -214,6 +213,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const switchRole = async (newRole: UserRole) => {
+    // Strictly prevent students from switching roles
+    if (role === 'student' && newRole !== 'student') {
+      console.warn('Students cannot switch roles');
+      return;
+    }
     setRole(newRole);
     setProfile((prev) => (prev ? { ...prev, role: newRole } : null));
     if (user) {
@@ -233,7 +237,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('Logout error:', err);
     }
     setUser(null);
-    setProfile(DEFAULT_GUEST_PROFILE);
+    setProfile(null);
     setRole('student');
   };
 

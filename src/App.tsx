@@ -73,7 +73,29 @@ function MainApp() {
     setCurrentTab('submit');
   };
 
-  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-3">
+        <div className="w-full max-w-[430px] mx-auto min-h-screen bg-emerald-700 flex flex-col items-center justify-center text-white space-y-3">
+          <div className="w-12 h-12 border-4 border-amber-300 border-t-transparent rounded-full animate-spin" />
+          <span className="font-mali text-base font-bold tracking-wide">
+            กำลังโหลด Trash Point...
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // When not logged in, the entry page MUST be the login screen
+  if (!profile) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-3">
+        <div className="w-full max-w-[430px] mx-auto min-h-screen bg-slate-100 flex items-center justify-center relative shadow-2xl overflow-hidden">
+          <AuthModal />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-800 flex justify-center selection:bg-emerald-500 selection:text-white">
@@ -92,13 +114,7 @@ function MainApp() {
           currentTab={currentTab}
           onSelectTab={(tab) => setCurrentTab(tab)}
           unreadCount={unreadNotifications}
-          onOpenAuth={() => setShowAuthModal(true)}
         />
-
-        {/* Auth Modal (shown when requested) */}
-        {showAuthModal && (
-          <AuthModal onClose={() => setShowAuthModal(false)} />
-        )}
 
         {/* Main Content Area */}
         <main className="flex-1 p-3.5 pt-3">

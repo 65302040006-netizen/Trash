@@ -255,40 +255,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
               <span>{loading ? 'กำลังเชื่อมต่อบัญชี Google...' : 'เข้าสู่ระบบด้วยบัญชี Google'}</span>
             </button>
 
-            {/* Quick Access Divider */}
+            {/* Divider */}
             <div className="relative my-3">
               <div className="absolute inset-0 flex items-center">
                 <div className="w-full border-t border-slate-200"></div>
               </div>
               <div className="relative flex justify-center text-[10px] uppercase">
-                <span className="bg-white px-2 text-slate-400 font-semibold">หรือเข้าใช้งานทันที</span>
+                <span className="bg-white px-2 text-slate-400 font-semibold">หรือเลือกเข้าสู่ระบบด้วยบัญชีโรงเรียน</span>
               </div>
             </div>
 
-            {/* Admin Quick Entry Button (65302040006@svc.ac.th) */}
-            <button
-              type="button"
-              onClick={() => {
-                loginAsAdminDirect();
-                if (onClose) onClose();
-              }}
-              className="w-full py-2.5 px-3 rounded-2xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition active:scale-98 mb-2"
-            >
-              <ShieldCheck className="w-4 h-4 text-amber-300" />
-              <span>เข้าใช้งานในฐานะ Admin (65302040006@svc.ac.th)</span>
-            </button>
-
-            {/* Student Quick Entry Button */}
+            {/* Student Login Button */}
             <button
               type="button"
               onClick={() => {
                 loginAsStudentDirect();
                 if (onClose) onClose();
               }}
-              className="w-full py-2 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition active:scale-98 mb-3"
+              className="w-full py-2.5 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition active:scale-98 mb-2"
             >
               <UserCheck className="w-4 h-4 text-emerald-200" />
-              <span>เข้าใช้งานด่วน (นักเรียน / ทดลองใช้)</span>
+              <span>เข้าสู่ระบบนักเรียน (โรงเรียน SVC)</span>
+            </button>
+
+            {/* Admin Login Button (65302040006@svc.ac.th) */}
+            <button
+              type="button"
+              onClick={() => {
+                loginAsAdminDirect();
+                if (onClose) onClose();
+              }}
+              className="w-full py-2.5 px-3 rounded-2xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition active:scale-98 mb-3"
+            >
+              <ShieldCheck className="w-4 h-4 text-amber-300" />
+              <span>เข้าสู่ระบบผู้ดูแลระบบ (65302040006@svc.ac.th)</span>
             </button>
 
             {/* Privacy Consent Checkbox */}
