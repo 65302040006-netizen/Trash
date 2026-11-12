@@ -23,13 +23,15 @@ import { handleFirestoreError, OperationType } from '../firebase/errors';
 import { UserProfile, UserRole, AppSettings } from '../types';
 import { DEFAULT_SETTINGS, initializeSeedData } from '../firebase/seed';
 
-interface AuthContextType {
+export interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   role: UserRole;
   loading: boolean;
   settings: AppSettings;
   loginWithGoogle: () => Promise<void>;
+  loginAsAdminDirect: () => void;
+  loginAsStudentDirect: () => void;
   updateProfileData: (data: Partial<UserProfile>) => Promise<void>;
   switchRole: (newRole: UserRole) => Promise<void>;
   logout: () => Promise<void>;
@@ -38,13 +40,29 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const ADMIN_EMAIL = '65302040006@svc.ac.th';
+export const ADMIN_EMAIL = '65302040006@svc.ac.th';
+
+export const DEFAULT_GUEST_PROFILE: UserProfile = {
+  uid: 'guest_student_01',
+  name: 'เด็กชายสมชาย รักสะอาด',
+  email: 'student@svc.ac.th',
+  className: 'ม.6/2',
+  number: '15',
+  studentId: '54321',
+  avatar: 'avatar_1',
+  role: 'student',
+  totalEarned: 35,
+  balance: 35,
+  totalPieces: 24,
+  certificateEarned: false,
+  createdAt: new Date().toISOString(),
+};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(DEFAULT_GUEST_PROFILE);
   const [role, setRole] = useState<UserRole>('student');
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   // Initialize seed data on startup
@@ -132,8 +150,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
       } else {
         if (unsubProfile) unsubProfile();
-        setProfile(null);
-        setRole('student');
+        // Fall back to active guest profile so app is immediately visible and usable
+        setProfile((prev) => prev || DEFAULT_GUEST_PROFILE);
+        setRole((prev) => prev || 'student');
         setLoading(false);
       }
     });
@@ -150,46 +169,72 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await signInWithPopup(auth, provider);
     } catch (err: unknown) {
       console.error('Google Sign-in failed:', err);
-      // If popup was blocked or failed, inform or fall back smoothly
       throw err;
     }
   };
 
+  const loginAsAdminDirect = () => {
+    const adminProf: UserProfile = {
+      uid: 'admin_65302040006',
+      name: 'ผู้ดูแลระบบโรงเรียน (SVC)',
+      email: ADMIN_EMAIL,
+      className: 'กลุ่มงานสิ่งแวดล้อม',
+      number: '1',
+      studentId: 'ADM-001',
+      avatar: 'avatar_3',
+      role: 'admin',
+      totalEarned: 150,
+      balance: 150,
+      totalPieces: 105,
+      certificateEarned: true,
+      createdAt: new Date().toISOString(),
+    };
+    setProfile(adminProf);
+    setRole('admin');
+  };
+
+  const loginAsStudentDirect = () => {
+    setProfile(DEFAULT_GUEST_PROFILE);
+    setRole('student');
+  };
+
   const updateProfileData = async (data: Partial<UserProfile>) => {
-    if (!user || !profile) return;
-    const userDocRef = doc(db, 'users', user.uid);
-    try {
-      await updateDoc(userDocRef, {
-        ...data,
-        updatedAt: new Date().toISOString(),
-      });
-      setProfile((prev) => (prev ? { ...prev, ...data } : null));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+    setProfile((prev) => (prev ? { ...prev, ...data } : null));
+    if (user) {
+      const userDocRef = doc(db, 'users', user.uid);
+      try {
+        await updateDoc(userDocRef, {
+          ...data,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+      }
     }
   };
 
   const switchRole = async (newRole: UserRole) => {
-    if (!profile || !user) return;
-    try {
-      const userDocRef = doc(db, 'users', user.uid);
-      await updateDoc(userDocRef, { role: newRole });
-      setRole(newRole);
-      setProfile((prev) => (prev ? { ...prev, role: newRole } : null));
-    } catch (err) {
-      // Local state fallback if rule restricts
-      setRole(newRole);
+    setRole(newRole);
+    setProfile((prev) => (prev ? { ...prev, role: newRole } : null));
+    if (user) {
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        await updateDoc(userDocRef, { role: newRole });
+      } catch (err) {
+        console.warn('Role switch rule warning:', err);
+      }
     }
   };
 
   const logout = async () => {
     try {
       await firebaseSignOut(auth);
-      setProfile(null);
-      setUser(null);
     } catch (err) {
       console.error('Logout error:', err);
     }
+    setUser(null);
+    setProfile(DEFAULT_GUEST_PROFILE);
+    setRole('student');
   };
 
   const refreshProfile = async () => {
@@ -213,6 +258,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         settings,
         loginWithGoogle,
+        loginAsAdminDirect,
+        loginAsStudentDirect,
         updateProfileData,
         switchRole,
         logout,

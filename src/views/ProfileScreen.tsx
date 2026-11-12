@@ -317,31 +317,79 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onNavigateToRole }
         )}
       </div>
 
-      {/* Role Navigation for Teacher/Admin */}
-      {(role === 'reviewer' || role === 'admin') && (
-        <div className="bg-emerald-50 rounded-3xl p-4 border border-emerald-200 shadow-sm space-y-2">
+      {/* Role Navigation & Mode Switcher */}
+      <div className="bg-emerald-50 rounded-3xl p-4 border border-emerald-200 shadow-xs space-y-2.5">
+        <div className="flex items-center justify-between">
           <h4 className="font-bold text-xs text-emerald-950 flex items-center gap-1.5">
             <Shield className="w-4 h-4 text-emerald-700" />
-            <span>เข้าสู่ระบบบริหารจัดการ:</span>
+            <span>โหมดการทำงานปัจจุบัน:</span>
           </h4>
-          <div className="flex gap-2 pt-1">
-            <button
-              onClick={() => onNavigateToRole && onNavigateToRole('reviewer')}
-              className="flex-1 py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-xs transition"
-            >
-              🔍 ตรวจสอบหลักฐานขยะ
-            </button>
-            {role === 'admin' && (
-              <button
-                onClick={() => onNavigateToRole && onNavigateToRole('admin')}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs shadow-xs transition"
-              >
-                🛡️ แผงควบคุมโรงเรียน
-              </button>
-            )}
-          </div>
+          <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-900">
+            {role === 'admin' ? '🛡️ ผู้ดูแลระบบ' : role === 'reviewer' ? '🔍 ครูผู้ตรวจงาน' : '🧑‍🎓 นักเรียน'}
+          </span>
         </div>
-      )}
+
+        {/* Role Switcher Chips */}
+        <div className="grid grid-cols-3 gap-1.5 pt-1">
+          <button
+            type="button"
+            onClick={() => switchRole('student')}
+            className={`py-2 px-1 rounded-xl text-xs font-bold transition text-center ${
+              role === 'student'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            นักเรียน
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              switchRole('reviewer');
+              if (onNavigateToRole) onNavigateToRole('reviewer');
+            }}
+            className={`py-2 px-1 rounded-xl text-xs font-bold transition text-center ${
+              role === 'reviewer'
+                ? 'bg-amber-500 text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            ครูตรวจงาน
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              switchRole('admin');
+              if (onNavigateToRole) onNavigateToRole('admin');
+            }}
+            className={`py-2 px-1 rounded-xl text-xs font-bold transition text-center ${
+              role === 'admin'
+                ? 'bg-purple-700 text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            แอดมิน
+          </button>
+        </div>
+
+        {/* Shortcut to dashboards */}
+        <div className="flex gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => onNavigateToRole && onNavigateToRole('reviewer')}
+            className="flex-1 py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-xs transition text-center"
+          >
+            🔍 หน้าตรวจสอบขยะ
+          </button>
+          <button
+            type="button"
+            onClick={() => onNavigateToRole && onNavigateToRole('admin')}
+            className="flex-1 py-2 px-3 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs shadow-xs transition text-center"
+          >
+            🛡️ แผงควบคุมโรงเรียน
+          </button>
+        </div>
+      </div>
 
       {/* Logout Button */}
       <button

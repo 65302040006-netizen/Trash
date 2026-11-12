@@ -6,10 +6,21 @@
 import React, { useState } from 'react';
 import { Mascot } from '../components/Mascot';
 import { useAuth } from '../context/AuthContext';
-import { Recycle } from 'lucide-react';
+import { Recycle, ShieldCheck, UserCheck, X } from 'lucide-react';
 
-export const AuthModal: React.FC = () => {
-  const { loginWithGoogle, profile, updateProfileData, user } = useAuth();
+interface AuthModalProps {
+  onClose?: () => void;
+}
+
+export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
+  const {
+    loginWithGoogle,
+    loginAsAdminDirect,
+    loginAsStudentDirect,
+    profile,
+    updateProfileData,
+    user,
+  } = useAuth();
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [acceptedConsent, setAcceptedConsent] = useState(true);
@@ -75,6 +86,17 @@ export const AuthModal: React.FC = () => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-emerald-950/70 p-4 backdrop-blur-sm overflow-y-auto">
       <div className="relative w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl text-center border-2 border-emerald-100 my-auto">
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-full transition"
+            title="ปิดหน้าต่าง"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+
         {/* Mascot Header */}
         <div className="flex justify-center -mt-12 mb-2">
           <div className="w-24 h-24 rounded-full bg-emerald-100/90 border-4 border-white flex items-center justify-center shadow-lg">
@@ -233,6 +255,42 @@ export const AuthModal: React.FC = () => {
               <span>{loading ? 'กำลังเชื่อมต่อบัญชี Google...' : 'เข้าสู่ระบบด้วยบัญชี Google'}</span>
             </button>
 
+            {/* Quick Access Divider */}
+            <div className="relative my-3">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-200"></div>
+              </div>
+              <div className="relative flex justify-center text-[10px] uppercase">
+                <span className="bg-white px-2 text-slate-400 font-semibold">หรือเข้าใช้งานทันที</span>
+              </div>
+            </div>
+
+            {/* Admin Quick Entry Button (65302040006@svc.ac.th) */}
+            <button
+              type="button"
+              onClick={() => {
+                loginAsAdminDirect();
+                if (onClose) onClose();
+              }}
+              className="w-full py-2.5 px-3 rounded-2xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition active:scale-98 mb-2"
+            >
+              <ShieldCheck className="w-4 h-4 text-amber-300" />
+              <span>เข้าใช้งานในฐานะ Admin (65302040006@svc.ac.th)</span>
+            </button>
+
+            {/* Student Quick Entry Button */}
+            <button
+              type="button"
+              onClick={() => {
+                loginAsStudentDirect();
+                if (onClose) onClose();
+              }}
+              className="w-full py-2 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition active:scale-98 mb-3"
+            >
+              <UserCheck className="w-4 h-4 text-emerald-200" />
+              <span>เข้าใช้งานด่วน (นักเรียน / ทดลองใช้)</span>
+            </button>
+
             {/* Privacy Consent Checkbox */}
             <div className="flex items-start gap-2 text-left bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 mb-2">
               <input
@@ -247,6 +305,16 @@ export const AuthModal: React.FC = () => {
                 และภาพถ่ายหลักฐานจะถูกใช้เพื่อการบันทึกกิจกรรมสะสมแต้มของโรงเรียนเท่านั้น
               </label>
             </div>
+
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full mt-1 py-1 text-xs text-slate-500 hover:text-slate-800 underline transition"
+              >
+                เข้าชมหน้าแอพก่อน
+              </button>
+            )}
 
             {errorMsg && (
               <p className="text-[11px] text-red-600 bg-red-50 p-2 rounded-lg text-left mt-2">

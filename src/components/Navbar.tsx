@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Bell, Recycle, ShieldCheck, ClipboardCheck } from 'lucide-react';
+import { Bell, Recycle, ShieldCheck, ClipboardCheck, User, LogIn } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -12,14 +12,16 @@ interface NavbarProps {
   currentTab: string;
   onSelectTab: (tab: string) => void;
   unreadCount?: number;
+  onOpenAuth?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   currentTab,
   onSelectTab,
   unreadCount = 0,
+  onOpenAuth,
 }) => {
-  const { profile, role, switchRole } = useAuth();
+  const { profile, role, switchRole, user } = useAuth();
 
   return (
     <header className="sticky top-0 z-30 bg-emerald-600 text-white shadow-md">
@@ -47,33 +49,69 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* PWA Install */}
           <PWAInstallButton />
 
-          {/* Reviewer / Admin Quick Switch for Authorized Staff */}
-          {(role === 'reviewer' || role === 'admin') && (
-            <div className="relative group">
-              <button
-                onClick={() => {
-                  if (currentTab === 'reviewer') onSelectTab('home');
-                  else if (currentTab === 'admin') onSelectTab('home');
-                  else if (role === 'admin') onSelectTab('admin');
-                  else onSelectTab('reviewer');
-                }}
-                className={`p-1.5 rounded-full transition text-xs flex items-center gap-1 ${
-                  currentTab === 'reviewer' || currentTab === 'admin'
-                    ? 'bg-amber-400 text-slate-900 font-bold'
-                    : 'bg-emerald-700/80 hover:bg-emerald-700 text-amber-200'
-                }`}
-                title="สลับโหมดครู/แอดมิน"
-              >
-                {role === 'admin' ? (
-                  <ShieldCheck className="w-4 h-4" />
-                ) : (
-                  <ClipboardCheck className="w-4 h-4" />
-                )}
-                <span className="text-[11px] pr-1">
-                  {role === 'admin' ? 'แอดมิน' : 'ตรวจงาน'}
-                </span>
-              </button>
-            </div>
+          {/* Role Access / Switcher */}
+          {role === 'admin' ? (
+            <button
+              onClick={() => {
+                if (currentTab === 'admin') onSelectTab('home');
+                else onSelectTab('admin');
+              }}
+              className={`p-1.5 px-2 rounded-xl transition text-xs flex items-center gap-1 ${
+                currentTab === 'admin'
+                  ? 'bg-amber-400 text-slate-900 font-bold shadow-xs'
+                  : 'bg-purple-800/80 hover:bg-purple-800 text-amber-200'
+              }`}
+              title="สลับโหมดแอดมิน"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span className="text-[11px]">แอดมิน</span>
+            </button>
+          ) : role === 'reviewer' ? (
+            <button
+              onClick={() => {
+                if (currentTab === 'reviewer') onSelectTab('home');
+                else onSelectTab('reviewer');
+              }}
+              className={`p-1.5 px-2 rounded-xl transition text-xs flex items-center gap-1 ${
+                currentTab === 'reviewer'
+                  ? 'bg-amber-400 text-slate-900 font-bold shadow-xs'
+                  : 'bg-amber-600/80 hover:bg-amber-600 text-white'
+              }`}
+              title="สลับโหมดตรวจงาน"
+            >
+              <ClipboardCheck className="w-4 h-4" />
+              <span className="text-[11px]">ตรวจงาน</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                switchRole('admin');
+                onSelectTab('admin');
+              }}
+              className="p-1 px-2 rounded-xl bg-emerald-700/80 hover:bg-emerald-800 text-amber-300 text-xs flex items-center gap-1 font-medium transition"
+              title="เปิดแผงควบคุมโรงเรียน (แอดมิน)"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span className="text-[10px]">แอดมิน</span>
+            </button>
+          )}
+
+          {/* Login / Profile Modal Trigger */}
+          {onOpenAuth && (
+            <button
+              onClick={onOpenAuth}
+              className="p-1 px-2 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs flex items-center gap-1 transition select-none"
+              title="จัดการบัญชี / เข้าสู่ระบบ"
+            >
+              {user ? (
+                <User className="w-3.5 h-3.5 text-emerald-200" />
+              ) : (
+                <LogIn className="w-3.5 h-3.5 text-amber-300" />
+              )}
+              <span className="text-[10px] hidden sm:inline">
+                {user ? 'บัญชี' : 'ล็อกอิน'}
+              </span>
+            </button>
           )}
 
           {/* Notification Bell */}
