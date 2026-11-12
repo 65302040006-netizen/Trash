@@ -26,7 +26,6 @@ import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errors';
 import { getBangkokTodayString } from '../utils/dateFormatter';
-import { getSampleBeforePhoto, getSampleAfterPhoto } from '../utils/sampleImages';
 import confetti from 'canvas-confetti';
 
 interface SubmitScreenProps {
@@ -450,28 +449,11 @@ export const SubmitScreen: React.FC<SubmitScreenProps> = ({
             </span>
           </div>
 
-          {/* Privacy guidance & Test sample autofill */}
-          <div className="flex flex-col gap-1.5">
-            <p className="text-[10px] text-slate-500 leading-tight bg-slate-50 p-2 rounded-xl flex items-center gap-1.5 border border-slate-200/60">
-              <ShieldAlert className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-              <span>คำเตือน: กรุณาไม่ถ่ายให้เห็นใบหน้าเพื่อนหรือบุคคลอื่น เพื่อความเป็นส่วนตัว</span>
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                const bPhoto = getSampleBeforePhoto();
-                const aPhoto = getSampleAfterPhoto();
-                setBeforePhoto(bPhoto);
-                setAfterPhoto(aPhoto);
-                setBeforeHash(`sample_before_${Date.now()}`);
-                setAfterHash(`sample_after_${Date.now()}`);
-              }}
-              className="py-1 px-2.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10px] font-semibold border border-emerald-200 flex items-center justify-center gap-1 transition self-end"
-            >
-              <Sparkles className="w-3 h-3 text-amber-500" />
-              <span>ใช้ภาพถ่ายตัวอย่าง (สำหรับทดสอบทันที)</span>
-            </button>
-          </div>
+          {/* Privacy guidance */}
+          <p className="text-[10px] text-slate-500 leading-tight bg-slate-50 p-2 rounded-xl flex items-center gap-1.5 border border-slate-200/60">
+            <ShieldAlert className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+            <span>คำเตือน: กรุณาไม่ถ่ายให้เห็นใบหน้าเพื่อนหรือบุคคลอื่น เพื่อความเป็นส่วนตัว</span>
+          </p>
 
           {/* Photo Boxes */}
           <div className="grid grid-cols-2 gap-3 items-center">

@@ -10,7 +10,6 @@ import {
   signInWithPopup,
   signOut as firebaseSignOut,
   onAuthStateChanged,
-  signInAnonymously,
 } from 'firebase/auth';
 import {
   doc,
@@ -31,7 +30,6 @@ interface AuthContextType {
   loading: boolean;
   settings: AppSettings;
   loginWithGoogle: () => Promise<void>;
-  loginAsDemo: (targetRole: UserRole) => Promise<void>;
   updateProfileData: (data: Partial<UserProfile>) => Promise<void>;
   switchRole: (newRole: UserRole) => Promise<void>;
   logout: () => Promise<void>;
@@ -157,66 +155,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  /**
-   * Fast Demo Login for school evaluations
-   */
-  const loginAsDemo = async (targetRole: UserRole) => {
-    setLoading(true);
-    try {
-      const cred = await signInAnonymously(auth);
-      const demoUser = cred.user;
-      const userDocRef = doc(db, 'users', demoUser.uid);
-
-      let name = 'สมชาย รักสะอาด';
-      let className = 'ม.6/2';
-      let number = '15';
-      let initialTotalEarned = 105; // Eligible for certificate demo!
-      let initialBalance = 45;
-      let initialTotalPieces = 48;
-
-      if (targetRole === 'reviewer') {
-        name = 'ครูวิมล ธรรมชาติ (ผู้ตรวจสอบ)';
-        className = 'ห้องสิ่งแวดล้อม';
-        number = '1';
-        initialTotalEarned = 0;
-        initialBalance = 0;
-        initialTotalPieces = 0;
-      } else if (targetRole === 'admin') {
-        name = 'ผอ. สมเกียรติ สถิตย์ (ผู้ดูแลระบบ)';
-        className = 'ฝ่ายบริหาร';
-        number = '1';
-        initialTotalEarned = 0;
-        initialBalance = 0;
-        initialTotalPieces = 0;
-      }
-
-      const demoProfile: UserProfile = {
-        uid: demoUser.uid,
-        name,
-        email: `${targetRole}_demo@school.local`,
-        className,
-        number,
-        studentId: targetRole === 'student' ? '54821' : undefined,
-        avatar: targetRole === 'student' ? 'avatar_1' : 'avatar_3',
-        role: targetRole,
-        totalEarned: initialTotalEarned,
-        balance: initialBalance,
-        totalPieces: initialTotalPieces,
-        certificateEarned: initialTotalEarned >= 100,
-        createdAt: new Date().toISOString(),
-      };
-
-      await setDoc(userDocRef, demoProfile, { merge: true });
-      setProfile(demoProfile);
-      setRole(targetRole);
-    } catch (err) {
-      console.error('Demo login error:', err);
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const updateProfileData = async (data: Partial<UserProfile>) => {
     if (!user || !profile) return;
     const userDocRef = doc(db, 'users', user.uid);
@@ -275,7 +213,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         settings,
         loginWithGoogle,
-        loginAsDemo,
         updateProfileData,
         switchRole,
         logout,

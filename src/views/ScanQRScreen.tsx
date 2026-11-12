@@ -231,24 +231,6 @@ export const ScanQRScreen: React.FC<ScanQRScreenProps> = ({
 
       {/* Fallback button: Choose location manually */}
       <div className="pt-2 max-w-[320px] mx-auto space-y-2">
-        {/* Quick Test Chips for Instant Testing */}
-        <div className="bg-slate-100/90 p-2.5 rounded-2xl border border-slate-200/80 text-left">
-          <span className="text-[10px] font-bold text-slate-600 block mb-1.5">
-            ⚡ หรือคลิกทดสอบสแกนจุดทิ้งขยะ (สำหรับอุปกรณ์ที่ไม่มีกล้อง):
-          </span>
-          <div className="flex flex-wrap gap-1.5">
-            {locations.map((loc) => (
-              <button
-                key={loc.id}
-                type="button"
-                onClick={() => handleQrCodeMatch(loc.qrCode)}
-                className="text-[10px] bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 font-semibold px-2.5 py-1 rounded-lg border border-slate-200 transition active:scale-95 shadow-2xs"
-              >
-                📍 {loc.name}
-              </button>
-            ))}
-          </div>
-        </div>
 
         <button
           onClick={() => setShowManualSelect(!showManualSelect)}

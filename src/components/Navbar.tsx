@@ -47,8 +47,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* PWA Install */}
           <PWAInstallButton />
 
-          {/* Quick role toggle for testing/demonstration if user is staff/admin */}
-          {(role === 'reviewer' || role === 'admin' || profile?.email?.includes('svc.ac.th') || profile?.email?.includes('demo')) && (
+          {/* Reviewer / Admin Quick Switch for Authorized Staff */}
+          {(role === 'reviewer' || role === 'admin') && (
             <div className="relative group">
               <button
                 onClick={() => {

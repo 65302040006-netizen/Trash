@@ -41,16 +41,16 @@ export const Mascot: React.FC<MascotProps> = ({
       >
         <defs>
           <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#34D399" />
-            <stop offset="100%" stop-color="#059669" />
+            <stop offset="0%" stopColor="#34D399" />
+            <stop offset="100%" stopColor="#059669" />
           </linearGradient>
           <linearGradient id="lidGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#10B981" />
-            <stop offset="100%" stop-color="#047857" />
+            <stop offset="0%" stopColor="#10B981" />
+            <stop offset="100%" stopColor="#047857" />
           </linearGradient>
           <linearGradient id="starGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#FBBF24" />
-            <stop offset="100%" stop-color="#F59E0B" />
+            <stop offset="0%" stopColor="#FBBF24" />
+            <stop offset="100%" stopColor="#F59E0B" />
           </linearGradient>
         </defs>
 

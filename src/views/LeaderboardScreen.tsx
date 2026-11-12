@@ -45,66 +45,7 @@ export const LeaderboardScreen: React.FC = () => {
           }
         });
 
-        // If list is empty (new database), provide mock initial student entries so the podium looks active
-        if (list.length === 0) {
-          const sampleStudents: UserProfile[] = [
-            {
-              uid: 'mock_1',
-              name: 'กิตติศักดิ์ พิทักษ์โลก',
-              className: 'ม.6/1',
-              number: '4',
-              avatar: 'avatar_1',
-              role: 'student',
-              totalEarned: 180,
-              balance: 80,
-              totalPieces: 95,
-              certificateEarned: true,
-              createdAt: new Date().toISOString(),
-            },
-            {
-              uid: 'mock_2',
-              name: 'ปิยะดา รักษ์สิ่งแวดล้อม',
-              className: 'ม.5/3',
-              number: '12',
-              avatar: 'avatar_2',
-              role: 'student',
-              totalEarned: 145,
-              balance: 55,
-              totalPieces: 72,
-              certificateEarned: true,
-              createdAt: new Date().toISOString(),
-            },
-            {
-              uid: 'mock_3',
-              name: 'ธนากร สะอาดดี',
-              className: 'ม.6/2',
-              number: '8',
-              avatar: 'avatar_3',
-              role: 'student',
-              totalEarned: 110,
-              balance: 30,
-              totalPieces: 58,
-              certificateEarned: true,
-              createdAt: new Date().toISOString(),
-            },
-            {
-              uid: 'mock_4',
-              name: 'ณิชาภา เขียวสดใส',
-              className: 'ม.4/2',
-              number: '21',
-              avatar: 'avatar_5',
-              role: 'student',
-              totalEarned: 85,
-              balance: 40,
-              totalPieces: 45,
-              certificateEarned: false,
-              createdAt: new Date().toISOString(),
-            },
-          ];
-          setLeaderboard(sampleStudents);
-        } else {
-          setLeaderboard(list);
-        }
+        setLeaderboard(list);
 
         setLastUpdated(formatThaiDateTime(new Date()));
       } catch (err) {

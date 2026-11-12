@@ -317,54 +317,31 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onNavigateToRole }
         )}
       </div>
 
-      {/* Role Testing / Switcher Panel for school demos */}
-      <div className="bg-white rounded-3xl p-4 border border-slate-100 shadow-sm space-y-2">
-        <h4 className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
-          <Shield className="w-4 h-4 text-emerald-600" />
-          <span>สลับบทบาทสำหรับทดสอบระบบ (Demo & Evaluation):</span>
-        </h4>
-        <p className="text-[11px] text-slate-500 leading-relaxed">
-          สามารถสลับมุมมองเพื่อทดสอบฟีเจอร์ของครูผู้ตรวจ หรือผู้ดูแลระบบได้ทันที:
-        </p>
-        <div className="grid grid-cols-3 gap-2 pt-1">
-          <button
-            onClick={() => switchRole('student')}
-            className={`py-2 px-1 rounded-xl text-xs font-bold transition border ${
-              role === 'student'
-                ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            🧑‍🎓 นักเรียน
-          </button>
-          <button
-            onClick={() => {
-              switchRole('reviewer');
-              if (onNavigateToRole) onNavigateToRole('reviewer');
-            }}
-            className={`py-2 px-1 rounded-xl text-xs font-bold transition border ${
-              role === 'reviewer'
-                ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
-                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            🔍 ครูผู้ตรวจ
-          </button>
-          <button
-            onClick={() => {
-              switchRole('admin');
-              if (onNavigateToRole) onNavigateToRole('admin');
-            }}
-            className={`py-2 px-1 rounded-xl text-xs font-bold transition border ${
-              role === 'admin'
-                ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
-                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            🛡️ แอดมิน
-          </button>
+      {/* Role Navigation for Teacher/Admin */}
+      {(role === 'reviewer' || role === 'admin') && (
+        <div className="bg-emerald-50 rounded-3xl p-4 border border-emerald-200 shadow-sm space-y-2">
+          <h4 className="font-bold text-xs text-emerald-950 flex items-center gap-1.5">
+            <Shield className="w-4 h-4 text-emerald-700" />
+            <span>เข้าสู่ระบบบริหารจัดการ:</span>
+          </h4>
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => onNavigateToRole && onNavigateToRole('reviewer')}
+              className="flex-1 py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-xs transition"
+            >
+              🔍 ตรวจสอบหลักฐานขยะ
+            </button>
+            {role === 'admin' && (
+              <button
+                onClick={() => onNavigateToRole && onNavigateToRole('admin')}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs shadow-xs transition"
+              >
+                🛡️ แผงควบคุมโรงเรียน
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Logout Button */}
       <button
