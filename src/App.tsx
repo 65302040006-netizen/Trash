@@ -25,7 +25,7 @@ import { db } from './firebase/config';
 import { WifiOff } from 'lucide-react';
 
 function MainApp() {
-  const { user, profile, loading } = useAuth();
+  const { profile, role, loading } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>('home');
   const [scannedLocation, setScannedLocation] = useState<TrashLocation | null>(null);
   const [unreadNotifications, setUnreadNotifications] = useState<number>(0);
@@ -163,11 +163,11 @@ function MainApp() {
             />
           )}
 
-          {currentTab === 'reviewer' && (
+          {currentTab === 'reviewer' && (role === 'reviewer' || role === 'admin') && (
             <ReviewerDashboard onBackToHome={() => setCurrentTab('home')} />
           )}
 
-          {currentTab === 'admin' && (
+          {currentTab === 'admin' && role === 'admin' && (
             <AdminDashboard onBackToHome={() => setCurrentTab('home')} />
           )}
         </main>

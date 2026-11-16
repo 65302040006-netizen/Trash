@@ -14,15 +14,16 @@ import {
   Plus,
   Trash2,
   QrCode,
-  Save,
   Megaphone,
   BarChart3,
   ArrowLeft,
   CheckCircle,
-  FileSpreadsheet,
   AlertCircle,
   Lock,
   Unlock,
+  KeyRound,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -34,6 +35,7 @@ import {
 import {
   collection,
   doc,
+  getDoc,
   setDoc,
   updateDoc,
   deleteDoc,
@@ -41,6 +43,15 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { QRCodeModal } from '../components/QRCodeModal';
+import {
+  INITIAL_VERIFY_HASHES,
+  INITIAL_PROOF_RULE_HASHES,
+  StaffVerifyHashes,
+  computeVerifyHash,
+  computeProofSecret,
+  computeProofRuleHash,
+  validateSecretStrength,
+} from '../utils/security';
 
 interface AdminDashboardProps {
   onBackToHome: () => void;
@@ -58,10 +69,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
     totalRedemptions: 0,
   });
 
+  // Global status banner for immediate feedback on all admin saves/actions
+  const [actionBanner, setActionBanner] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+
+  const showBanner = (type: 'success' | 'error', message: string) => {
+    setActionBanner({ type, message });
+    setTimeout(() => {
+      setActionBanner((prev) => (prev?.message === message ? null : prev));
+    }, 3500);
+  };
+
   // Locations state
   const [locations, setLocations] = useState<TrashLocation[]>([]);
   const [newLocName, setNewLocName] = useState('');
   const [newLocDesc, setNewLocDesc] = useState('');
+  const [savingLocation, setSavingLocation] = useState(false);
+  const [confirmDeleteLocId, setConfirmDeleteLocId] = useState<string | null>(null);
   const [qrModalLoc, setQrModalLoc] = useState<TrashLocation | null>(null);
 
   // Settings form state
@@ -76,6 +102,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSavedSuccess, setSettingsSavedSuccess] = useState(false);
 
+  // Sync settings form when Firestore app_config arrives
+  useEffect(() => {
+    setRuleGeneralMin(settings.generalMin || 5);
+    setRuleGeneralPerPiece(settings.generalPerPiece || 1);
+    setRuleRecycleMin(settings.recycleMin || 15);
+    setRuleRecyclePerPiece(settings.recyclePerPiece || 2);
+    setRuleCertTarget(settings.certificateTarget || 100);
+    setRuleDailyLimit(settings.dailySubmitLimit || 3);
+    setRuleMaxPieces(settings.maxPiecesPerSubmit || 50);
+    setAnnouncementText(settings.announcement || '');
+  }, [settings]);
+
   // Announcement saving state
   const [savingAnnouncement, setSavingAnnouncement] = useState(false);
   const [announcementSavedSuccess, setAnnouncementSavedSuccess] = useState(false);
@@ -86,14 +124,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
   const [newRewardCategory, setNewRewardCategory] = useState('เครื่องเขียน');
   const [newRewardCost, setNewRewardCost] = useState(20);
   const [newRewardStock, setNewRewardStock] = useState(30);
+  const [savingReward, setSavingReward] = useState(false);
+  const [confirmDeleteRewardId, setConfirmDeleteRewardId] = useState<string | null>(null);
 
   // Users state
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
+  // Security Credential Rotation State (Card 7)
+  const [secTargetRole, setSecTargetRole] = useState<'admin' | 'reviewer'>('admin');
+  const [secMode, setSecMode] = useState<'credentials' | 'pin'>('credentials');
+  const [secUsername, setSecUsername] = useState('');
+  const [secPassword, setSecPassword] = useState('');
+  const [secPin, setSecPin] = useState('');
+  const [showSecSecret, setShowSecSecret] = useState(false);
+  const [savingSec, setSavingSec] = useState(false);
+  const [secFeedback, setSecFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+
   // Fetch Dashboard Statistics and Collections
   useEffect(() => {
-    // 1. Fetch Users
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
       const uList: UserProfile[] = [];
       let totalPiecesCollected = 0;
@@ -115,7 +167,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
       }));
     });
 
-    // 2. Fetch Submissions for pending count
     const unsubSubmissions = onSnapshot(collection(db, 'submissions'), (snap) => {
       let pendingCount = 0;
       snap.forEach((d) => {
@@ -124,19 +175,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
       setStats((prev) => ({ ...prev, pendingSubmissions: pendingCount }));
     });
 
-    // 3. Fetch Redemptions count
     const unsubRedemptions = onSnapshot(collection(db, 'redemptions'), (snap) => {
       setStats((prev) => ({ ...prev, totalRedemptions: snap.size }));
     });
 
-    // 4. Fetch Locations
     const unsubLocations = onSnapshot(collection(db, 'locations'), (snap) => {
       const lList: TrashLocation[] = [];
       snap.forEach((d) => lList.push({ id: d.id, ...(d.data() as Omit<TrashLocation, 'id'>) }));
       setLocations(lList);
     });
 
-    // 5. Fetch Rewards
     const unsubRewards = onSnapshot(collection(db, 'rewards'), (snap) => {
       const rList: Reward[] = [];
       snap.forEach((d) => rList.push({ id: d.id, ...(d.data() as Omit<Reward, 'id'>) }));
@@ -152,18 +200,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
     };
   }, []);
 
-  // Save Announcement
+  // Save Announcement (uses setDoc merge so it never fails if doc doesn't exist yet)
   const handleSaveAnnouncement = async () => {
     setSavingAnnouncement(true);
     setAnnouncementSavedSuccess(false);
     try {
-      await updateDoc(doc(db, 'settings', 'app_config'), {
-        announcement: announcementText.trim(),
-      });
+      await setDoc(
+        doc(db, 'settings', 'app_config'),
+        {
+          generalMin: Number(ruleGeneralMin),
+          generalPerPiece: Number(ruleGeneralPerPiece),
+          recycleMin: Number(ruleRecycleMin),
+          recyclePerPiece: Number(ruleRecyclePerPiece),
+          certificateTarget: Number(ruleCertTarget),
+          dailySubmitLimit: Number(ruleDailyLimit),
+          maxPiecesPerSubmit: Number(ruleMaxPieces),
+          announcement: announcementText.trim(),
+        },
+        { merge: true }
+      );
       setAnnouncementSavedSuccess(true);
+      showBanner('success', 'บันทึกข้อความประกาศเรียบร้อยแล้ว');
       setTimeout(() => setAnnouncementSavedSuccess(false), 2500);
     } catch (err) {
       console.error('Save announcement error:', err);
+      showBanner('error', 'บันทึกประกาศไม่สำเร็จ กรุณาตรวจสอบสิทธิ์ผู้ดูแลระบบ');
     } finally {
       setSavingAnnouncement(false);
     }
@@ -187,11 +248,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
         announcement: announcementText.trim(),
       };
 
-      await setDoc(doc(db, 'settings', 'app_config'), updated);
+      await setDoc(doc(db, 'settings', 'app_config'), updated, { merge: true });
       setSettingsSavedSuccess(true);
+      showBanner('success', 'บันทึกกติกาคะแนนเรียบร้อยแล้ว');
       setTimeout(() => setSettingsSavedSuccess(false), 2500);
     } catch (err) {
       console.error('Save settings error:', err);
+      showBanner('error', 'บันทึกกติกาคะแนนไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
     } finally {
       setSavingSettings(false);
     }
@@ -200,7 +263,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
   // Add Location
   const handleAddLocation = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newLocName.trim()) return;
+    if (!newLocName.trim() || savingLocation) return;
+    setSavingLocation(true);
     try {
       const locId = `loc_${Date.now()}`;
       const qrCodeVal = `TRASH_LOC_${Date.now().toString(36).toUpperCase()}`;
@@ -216,25 +280,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
 
       setNewLocName('');
       setNewLocDesc('');
+      showBanner('success', 'เพิ่มจุดทิ้งขยะ & QR Code เรียบร้อยแล้ว');
     } catch (err) {
       console.error('Add location error:', err);
+      showBanner('error', 'เพิ่มจุดทิ้งขยะไม่สำเร็จ');
+    } finally {
+      setSavingLocation(false);
     }
   };
 
   // Delete Location
   const handleDeleteLocation = async (id: string) => {
-    if (!confirm('ต้องการลบจุดทิ้งขยะนี้หรือไม่?')) return;
     try {
       await deleteDoc(doc(db, 'locations', id));
+      setConfirmDeleteLocId(null);
+      showBanner('success', 'ลบจุดทิ้งขยะแล้ว');
     } catch (err) {
       console.error('Delete location error:', err);
+      showBanner('error', 'ลบจุดทิ้งขยะไม่สำเร็จ');
     }
   };
 
   // Add Reward
   const handleAddReward = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newRewardName.trim()) return;
+    if (!newRewardName.trim() || savingReward) return;
+    setSavingReward(true);
     try {
       const rewardId = `rew_${Date.now()}`;
       await setDoc(doc(db, 'rewards', rewardId), {
@@ -244,14 +315,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
         icon: 'gift',
         cost: Number(newRewardCost),
         stock: Number(newRewardStock),
-        month: 'กุมภาพันธ์',
+        month: 'ประจำเดือน',
         active: true,
       });
       setNewRewardName('');
       setNewRewardCost(20);
       setNewRewardStock(30);
+      showBanner('success', 'เพิ่มของรางวัลเรียบร้อยแล้ว');
     } catch (err) {
       console.error('Add reward error:', err);
+      showBanner('error', 'เพิ่มของรางวัลไม่สำเร็จ');
+    } finally {
+      setSavingReward(false);
     }
   };
 
@@ -261,41 +336,170 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
       await updateDoc(doc(db, 'rewards', id), {
         stock: Math.max(0, newStock),
       });
+      showBanner('success', 'อัปเดตสต็อกของรางวัลแล้ว');
     } catch (err) {
       console.error('Update stock error:', err);
+      showBanner('error', 'อัปเดตสต็อกไม่สำเร็จ');
     }
   };
 
   // Delete Reward
   const handleDeleteReward = async (id: string) => {
-    if (!confirm('ต้องการลบของรางวัลนี้หรือไม่?')) return;
     try {
       await deleteDoc(doc(db, 'rewards', id));
+      setConfirmDeleteRewardId(null);
+      showBanner('success', 'ลบของรางวัลเรียบร้อยแล้ว');
     } catch (err) {
       console.error('Delete reward error:', err);
+      showBanner('error', 'ลบของรางวัลไม่สำเร็จ');
     }
   };
 
-  // Update User Role
+  // Update User Role (and sync admins/reviewers RBAC docs cleanly)
   const handleUpdateUserRole = async (userId: string, newRole: 'student' | 'reviewer' | 'admin') => {
     try {
-      await updateDoc(doc(db, 'users', userId), { role: newRole });
+      const now = new Date().toISOString();
+      await updateDoc(doc(db, 'users', userId), { role: newRole, updatedAt: now });
       if (newRole === 'admin') {
-        await setDoc(doc(db, 'admins', userId), { active: true });
+        await setDoc(doc(db, 'admins', userId), { active: true, updatedAt: now }, { merge: true });
       } else if (newRole === 'reviewer') {
-        await setDoc(doc(db, 'reviewers', userId), { active: true });
+        await setDoc(doc(db, 'reviewers', userId), { active: true, updatedAt: now }, { merge: true });
+        await deleteDoc(doc(db, 'admins', userId)).catch(() => {});
+      } else {
+        await deleteDoc(doc(db, 'admins', userId)).catch(() => {});
+        await deleteDoc(doc(db, 'reviewers', userId)).catch(() => {});
       }
+      showBanner('success', 'อัปเดตสิทธิ์ผู้ใช้เรียบร้อยแล้ว');
     } catch (err) {
       console.error('Update role error:', err);
+      showBanner('error', 'อัปเดตสิทธิ์ผู้ใช้ไม่สำเร็จ');
     }
   };
 
   // Toggle user disabled status
   const handleToggleUserDisabled = async (userId: string, currentDisabled?: boolean) => {
     try {
-      await updateDoc(doc(db, 'users', userId), { disabled: !currentDisabled });
+      await updateDoc(doc(db, 'users', userId), {
+        disabled: !currentDisabled,
+        updatedAt: new Date().toISOString(),
+      });
+      showBanner('success', !currentDisabled ? 'ระงับบัญชีเรียบร้อยแล้ว' : 'ปลดการระงับบัญชีแล้ว');
     } catch (err) {
       console.error('Toggle disabled error:', err);
+      showBanner('error', 'เปลี่ยนสถานะบัญชีไม่สำเร็จ');
+    }
+  };
+
+  // Rotate Admin or Reviewer Password/PIN securely (stores only hashes in Firestore)
+  const handleRotateCredentials = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSecFeedback(null);
+
+    if (secMode === 'credentials') {
+      if (secUsername.trim().length < 4) {
+        setSecFeedback({
+          type: 'error',
+          message: 'ชื่อผู้ใช้ต้องมีอย่างน้อย 4 ตัวอักษร',
+        });
+        return;
+      }
+      const strengthError = validateSecretStrength('credentials', secPassword);
+      if (strengthError) {
+        setSecFeedback({ type: 'error', message: strengthError });
+        return;
+      }
+    } else {
+      const strengthError = validateSecretStrength('pin', secPin);
+      if (strengthError) {
+        setSecFeedback({ type: 'error', message: strengthError });
+        return;
+      }
+    }
+
+    setSavingSec(true);
+    try {
+      // Load existing hashes so unmodified credential slots remain intact
+      const secDocRef = doc(db, 'staff_security', 'hashes');
+      const secSnap = await getDoc(secDocRef);
+      const existingData = secSnap.exists()
+        ? (secSnap.data() as StaffVerifyHashes & { rotatedSlots?: Record<string, boolean> })
+        : null;
+
+      const rotatedSlots: Record<string, boolean> = {
+        ...(existingData?.rotatedSlots || {}),
+      };
+
+      const nextVerifyHashes: StaffVerifyHashes & { rotatedSlots: Record<string, boolean> } = {
+        adminCredHash: existingData?.adminCredHash || INITIAL_VERIFY_HASHES.adminCredHash,
+        adminPinHash: existingData?.adminPinHash || INITIAL_VERIFY_HASHES.adminPinHash,
+        revCredHash: existingData?.revCredHash || INITIAL_VERIFY_HASHES.revCredHash,
+        revPinHash: existingData?.revPinHash || INITIAL_VERIFY_HASHES.revPinHash,
+        overrideActive: true,
+        updatedAt: new Date().toISOString(),
+        rotatedSlots,
+      };
+
+      const secretVal = secMode === 'credentials' ? secPassword.trim() : secPin.trim();
+      const newVerifyHash = await computeVerifyHash(secTargetRole, secMode, secUsername, secretVal);
+      const newProofSecret = await computeProofSecret(secTargetRole, secMode, secUsername, secretVal);
+      const newProofRuleHash = await computeProofRuleHash(newProofSecret);
+
+      const proofUpdate: Record<string, unknown> = {
+        overrideActive: true,
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Initialize any un-rotated slots on private_security with initial rule hashes
+      if (!rotatedSlots.adminCred) {
+        proofUpdate.adminCredProofHash = INITIAL_PROOF_RULE_HASHES.adminCredProofHash;
+      }
+      if (!rotatedSlots.adminPin) {
+        proofUpdate.adminPinProofHash = INITIAL_PROOF_RULE_HASHES.adminPinProofHash;
+      }
+      if (!rotatedSlots.revCred) {
+        proofUpdate.revCredProofHash = INITIAL_PROOF_RULE_HASHES.revCredProofHash;
+      }
+      if (!rotatedSlots.revPin) {
+        proofUpdate.revPinProofHash = INITIAL_PROOF_RULE_HASHES.revPinProofHash;
+      }
+
+      if (secTargetRole === 'admin' && secMode === 'credentials') {
+        nextVerifyHashes.adminCredHash = newVerifyHash;
+        proofUpdate.adminCredProofHash = newProofRuleHash;
+        rotatedSlots.adminCred = true;
+      } else if (secTargetRole === 'admin' && secMode === 'pin') {
+        nextVerifyHashes.adminPinHash = newVerifyHash;
+        proofUpdate.adminPinProofHash = newProofRuleHash;
+        rotatedSlots.adminPin = true;
+      } else if (secTargetRole === 'reviewer' && secMode === 'credentials') {
+        nextVerifyHashes.revCredHash = newVerifyHash;
+        proofUpdate.revCredProofHash = newProofRuleHash;
+        rotatedSlots.revCred = true;
+      } else {
+        nextVerifyHashes.revPinHash = newVerifyHash;
+        proofUpdate.revPinProofHash = newProofRuleHash;
+        rotatedSlots.revPin = true;
+      }
+
+      await setDoc(secDocRef, nextVerifyHashes, { merge: true });
+      await setDoc(doc(db, 'private_security', 'staff_proofs'), proofUpdate, { merge: true });
+
+      setSecUsername('');
+      setSecPassword('');
+      setSecPin('');
+      setSecFeedback({
+        type: 'success',
+        message: 'บันทึกรหัสผ่านใหม่แบบเข้ารหัสแฮชเรียบร้อยแล้ว (มีผลทันที)',
+      });
+      showBanner('success', 'อัปเดตรหัสเข้าสู่ระบบเจ้าหน้าที่เรียบร้อยแล้ว');
+    } catch (err) {
+      console.error('Rotate credentials error:', err);
+      setSecFeedback({
+        type: 'error',
+        message: 'บันทึกรหัสใหม่ไม่สำเร็จ กรุณาตรวจสอบสิทธิ์ผู้ดูแลระบบ',
+      });
+    } finally {
+      setSavingSec(false);
     }
   };
 
@@ -359,9 +563,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
         </button>
       </div>
 
-      {/* =========================================================================
-          CARD 1: OVERVIEW STATS & CSV EXPORT
-          ========================================================================= */}
+      {/* Live Feedback Banner */}
+      {actionBanner && (
+        <div
+          className={`p-3 rounded-2xl border text-xs font-bold flex items-center gap-2 shadow-sm ${
+            actionBanner.type === 'success'
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+              : 'bg-red-50 border-red-300 text-red-800'
+          }`}
+        >
+          {actionBanner.type === 'success' ? (
+            <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+          ) : (
+            <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+          )}
+          <span>{actionBanner.message}</span>
+        </div>
+      )}
+
+      {/* CARD 1: OVERVIEW STATS & CSV EXPORT */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-slate-800">
@@ -413,9 +633,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
         </div>
       </div>
 
-      {/* =========================================================================
-          CARD 2: BROADCAST ANNOUNCEMENT
-          ========================================================================= */}
+      {/* CARD 2: BROADCAST ANNOUNCEMENT */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-3">
         <div className="flex items-center gap-2 text-slate-800">
           <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
@@ -455,9 +673,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
         </div>
       </div>
 
-      {/* =========================================================================
-          CARD 3: LOCATIONS & QR CODES
-          ========================================================================= */}
+      {/* CARD 3: LOCATIONS & QR CODES */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-slate-800">
@@ -495,10 +711,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
           </div>
           <button
             type="submit"
-            className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 shadow-2xs"
+            disabled={savingLocation}
+            className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 shadow-2xs disabled:opacity-50"
           >
             <Plus className="w-4 h-4" />
-            <span>บันทึกจุดทิ้งขยะ & สร้าง QR</span>
+            <span>{savingLocation ? 'กำลังบันทึก...' : 'บันทึกจุดทิ้งขยะ & สร้าง QR'}</span>
           </button>
         </form>
 
@@ -527,23 +744,40 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
                   <QrCode className="w-3.5 h-3.5" />
                   <span>ป้าย QR</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteLocation(loc.id)}
-                  className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition"
-                  title="ลบจุดนี้"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {confirmDeleteLocId === loc.id ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteLocation(loc.id)}
+                      className="px-2 py-1 text-[10px] font-bold bg-red-600 text-white rounded-lg"
+                    >
+                      ยืนยันลบ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteLocId(null)}
+                      className="px-2 py-1 text-[10px] font-semibold bg-slate-200 text-slate-700 rounded-lg"
+                    >
+                      ยกเลิก
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteLocId(loc.id)}
+                    className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition"
+                    title="ลบจุดนี้"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* =========================================================================
-          CARD 4: SCORING RULES CONFIGURATION
-          ========================================================================= */}
+      {/* CARD 4: SCORING RULES CONFIGURATION */}
       <form
         onSubmit={handleSaveSettings}
         className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4"
@@ -559,7 +793,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
         </div>
 
         <div className="space-y-3 text-xs">
-          {/* General Trash */}
           <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200">
             <span className="font-bold text-slate-900 block mb-2">🗑️ ขยะทั่วไป:</span>
             <div className="grid grid-cols-2 gap-2.5">
@@ -586,7 +819,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
             </div>
           </div>
 
-          {/* Recycle Trash */}
           <div className="bg-emerald-50/60 p-3 rounded-2xl border border-emerald-200">
             <span className="font-bold text-emerald-950 block mb-2">♻️ ขยะรีไซเคิล / ขวดพลาสติก:</span>
             <div className="grid grid-cols-2 gap-2.5">
@@ -613,7 +845,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
             </div>
           </div>
 
-          {/* Anti-cheat & Certificate Limits */}
           <div className="grid grid-cols-3 gap-2">
             <div>
               <label className="text-[10px] text-slate-500 block mb-1">เป้าเกียรติบัตร (แต้ม):</label>
@@ -660,9 +891,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
         </button>
       </form>
 
-      {/* =========================================================================
-          CARD 5: REWARD CATALOG & INVENTORY
-          ========================================================================= */}
+      {/* CARD 5: REWARD CATALOG & INVENTORY */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-slate-800">
@@ -678,7 +907,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
           </div>
         </div>
 
-        {/* Add Reward Form */}
         <form onSubmit={handleAddReward} className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2.5">
           <span className="text-xs font-bold text-slate-700 block">เพิ่มของรางวัลใหม่:</span>
           <div className="grid grid-cols-2 gap-2">
@@ -713,13 +941,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
           </div>
           <button
             type="submit"
-            className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-2xs"
+            disabled={savingReward}
+            className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-2xs disabled:opacity-50"
           >
-            บันทึกของรางวัล
+            {savingReward ? 'กำลังบันทึก...' : 'บันทึกของรางวัล'}
           </button>
         </form>
 
-        {/* Reward Inventory List */}
         <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
           {rewardsList.map((rew) => (
             <div
@@ -744,22 +972,40 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
                     className="w-14 text-center font-bold text-xs border border-slate-300 rounded-lg p-1 bg-white"
                   />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteReward(rew.id)}
-                  className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {confirmDeleteRewardId === rew.id ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteReward(rew.id)}
+                      className="px-2 py-1 text-[10px] font-bold bg-red-600 text-white rounded-lg"
+                    >
+                      ยืนยันลบ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteRewardId(null)}
+                      className="px-2 py-1 text-[10px] font-semibold bg-slate-200 text-slate-700 rounded-lg"
+                    >
+                      ยกเลิก
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteRewardId(rew.id)}
+                    className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition"
+                    title="ลบของรางวัล"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* =========================================================================
-          CARD 6: USER ACCOUNTS & ROLE PERMISSIONS
-          ========================================================================= */}
+      {/* CARD 6: USER ACCOUNTS & ROLE PERMISSIONS */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-slate-800">
@@ -775,7 +1021,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
           </div>
         </div>
 
-        {/* User Search Input */}
         <input
           type="text"
           value={userSearchQuery}
@@ -784,7 +1029,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
           className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
         />
 
-        {/* Users List */}
         <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
           {filteredUsers.length === 0 ? (
             <p className="text-center text-xs text-slate-400 py-4">ไม่พบรายชื่อผู้ใช้</p>
@@ -813,7 +1057,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
                 <div className="flex items-center gap-1.5">
                   <select
                     value={u.role || 'student'}
-                    onChange={(e) => handleUpdateUserRole(u.uid, e.target.value as any)}
+                    onChange={(e) => handleUpdateUserRole(u.uid, e.target.value as 'student' | 'reviewer' | 'admin')}
                     className="text-xs bg-white border border-slate-300 rounded-xl px-2 py-1 text-slate-700 focus:outline-none"
                   >
                     <option value="student">นักเรียน</option>
@@ -839,6 +1083,176 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
           )}
         </div>
       </div>
+
+      {/* CARD 7: STAFF CREDENTIAL & PIN SECURITY ROTATION */}
+      <form
+        onSubmit={handleRotateCredentials}
+        className="bg-white rounded-3xl p-5 border border-purple-200/90 shadow-sm space-y-3.5"
+      >
+        <div className="flex items-center gap-2 text-slate-800">
+          <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center">
+            <KeyRound className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="font-bold text-sm text-slate-900">ความปลอดภัย & เปลี่ยนรหัสผ่าน / PIN</h3>
+            <p className="text-[11px] text-slate-500">
+              บันทึกเป็นแฮช SHA-256 เสมอ (ไม่เก็บรหัสจริงในระบบ)
+            </p>
+          </div>
+        </div>
+
+        {/* Select Staff Role to Update */}
+        <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
+          <button
+            type="button"
+            onClick={() => {
+              setSecTargetRole('admin');
+              setSecFeedback(null);
+            }}
+            className={`py-1.5 rounded-lg text-xs font-bold transition ${
+              secTargetRole === 'admin'
+                ? 'bg-purple-700 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            ผู้ดูแลระบบ (Admin)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSecTargetRole('reviewer');
+              setSecFeedback(null);
+            }}
+            className={`py-1.5 rounded-lg text-xs font-bold transition ${
+              secTargetRole === 'reviewer'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            ครูผู้ตรวจ (Reviewer)
+          </button>
+        </div>
+
+        {/* Select Credential Type */}
+        <div className="flex gap-2 text-xs">
+          <button
+            type="button"
+            onClick={() => {
+              setSecMode('credentials');
+              setSecFeedback(null);
+            }}
+            className={`flex-1 py-1.5 px-3 rounded-xl border font-bold transition ${
+              secMode === 'credentials'
+                ? 'bg-purple-50 border-purple-400 text-purple-900'
+                : 'bg-slate-50 border-slate-200 text-slate-600'
+            }`}
+          >
+            Username & Password
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSecMode('pin');
+              setSecFeedback(null);
+            }}
+            className={`flex-1 py-1.5 px-3 rounded-xl border font-bold transition ${
+              secMode === 'pin'
+                ? 'bg-purple-50 border-purple-400 text-purple-900'
+                : 'bg-slate-50 border-slate-200 text-slate-600'
+            }`}
+          >
+            รหัส PIN (6–12 หลัก)
+          </button>
+        </div>
+
+        {secMode === 'credentials' ? (
+          <div className="space-y-2.5 text-xs">
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">
+                Username ใหม่ (อย่างน้อย 4 ตัวอักษร):
+              </label>
+              <input
+                type="text"
+                required
+                value={secUsername}
+                onChange={(e) => setSecUsername(e.target.value)}
+                placeholder="ตั้งชื่อผู้ใช้ใหม่..."
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">
+                รหัสผ่านใหม่ (8+ ตัวอักษร ผสมตัวอักษรและตัวเลข):
+              </label>
+              <div className="relative">
+                <input
+                  type={showSecSecret ? 'text' : 'password'}
+                  required
+                  value={secPassword}
+                  onChange={(e) => setSecPassword(e.target.value)}
+                  placeholder="ตั้งรหัสผ่านที่คาดเดายาก..."
+                  className="w-full pl-3 pr-9 py-2 rounded-xl border border-slate-300 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSecSecret((v) => !v)}
+                  className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600"
+                >
+                  {showSecSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="text-xs">
+            <label className="block font-semibold text-slate-700 mb-1">
+              รหัส PIN ใหม่ (ตัวเลข 6–12 หลัก ห้ามเรียงหรือซ้ำ):
+            </label>
+            <div className="relative">
+              <input
+                type={showSecSecret ? 'text' : 'password'}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={12}
+                required
+                value={secPin}
+                onChange={(e) => setSecPin(e.target.value.replace(/\D/g, ''))}
+                placeholder="ตั้งรหัส PIN ตัวเลข 6–12 หลัก..."
+                className="w-full pl-3 pr-9 py-2.5 font-mono tracking-widest rounded-xl border border-slate-300 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSecSecret((v) => !v)}
+                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+              >
+                {showSecSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {secFeedback && (
+          <p
+            className={`text-xs font-bold p-2.5 rounded-xl border text-center ${
+              secFeedback.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-red-50 border-red-200 text-red-700'
+            }`}
+          >
+            {secFeedback.message}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={savingSec}
+          className="w-full py-2.5 bg-purple-700 hover:bg-purple-800 text-white rounded-xl text-xs font-bold shadow-md transition disabled:opacity-50"
+        >
+          {savingSec
+            ? 'กำลังเข้ารหัสและบันทึก...'
+            : `บันทึกรหัส ${secTargetRole === 'admin' ? 'ผู้ดูแลระบบ' : 'ครูผู้ตรวจ'} ใหม่`}
+        </button>
+      </form>
 
       {/* QR Code Location Poster Modal */}
       {qrModalLoc && (

@@ -14,7 +14,6 @@ export type RedemptionStatus = 'pending' | 'delivered';
 export interface UserProfile {
   uid: string;
   name: string;
-  email?: string;
   className: string; // e.g. "ม.6/2"
   number: string; // e.g. "12"
   studentId?: string; // e.g. "54321"
@@ -25,6 +24,7 @@ export interface UserProfile {
   totalPieces: number; // Total pieces of trash collected
   certificateEarned: boolean;
   disabled?: boolean;
+  profileCompleted?: boolean;
   createdAt: string;
   updatedAt?: string;
 }

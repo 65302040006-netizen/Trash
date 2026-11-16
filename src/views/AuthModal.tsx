@@ -3,38 +3,117 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Mascot } from '../components/Mascot';
 import { useAuth } from '../context/AuthContext';
-import { Recycle, ShieldCheck, UserCheck, X } from 'lucide-react';
+import {
+  Recycle,
+  ShieldCheck,
+  UserCheck,
+  ClipboardCheck,
+  KeyRound,
+  Lock,
+  User as UserIcon,
+  ChevronRight,
+  LogOut,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+} from 'lucide-react';
 
 interface AuthModalProps {
   onClose?: () => void;
 }
 
-export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_SECONDS = 30;
+
+export const AuthModal: React.FC<AuthModalProps> = () => {
   const {
-    loginWithGoogle,
-    loginAsAdminDirect,
-    loginAsStudentDirect,
-    profile,
-    updateProfileData,
     user,
+    needsStudentRegistration,
+    loginWithGoogle,
+    completeStudentRegistration,
+    verifyStaffSecret,
+    elevateWithGoogleAndProof,
+    logout,
   } = useAuth();
+
+  // Active Login Tab: 'student' | 'reviewer' | 'admin'
+  const [activeTab, setActiveTab] = useState<'student' | 'reviewer' | 'admin'>('student');
+  const [staffAuthType, setStaffAuthType] = useState<'credentials' | 'pin'>('credentials');
+
+  // Loading & feedback states
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [acceptedConsent, setAcceptedConsent] = useState(true);
+  const [showSecret, setShowSecret] = useState(false);
 
-  // Setup profile form state
-  const [name, setName] = useState(profile?.name || user?.displayName || '');
-  const [className, setClassName] = useState(profile?.className || 'ม.6/2');
-  const [number, setNumber] = useState(profile?.number || '15');
-  const [studentId, setStudentId] = useState(profile?.studentId || '54321');
-  const [selectedAvatar, setSelectedAvatar] = useState(profile?.avatar || 'avatar_1');
+  // Brute-force lockout timer state per staff tab
+  const [failCount, setFailCount] = useState(0);
+  const [lockRemaining, setLockRemaining] = useState(0);
 
-  // If user is logged in but hasn't finalized their student profile
-  const isSettingUpProfile = user && (!profile?.className || profile?.className === 'ม.1/1' && !profile?.studentId);
+  // Pending popup-blocked staff elevation
+  const [pendingElevation, setPendingElevation] = useState<{
+    roleTarget: 'admin' | 'reviewer';
+    proofSecret: string;
+  } | null>(null);
 
+  // Student Registration Form State (shown after Google login for new accounts)
+  const [name, setName] = useState('');
+  const [className, setClassName] = useState('ม.1/1');
+  const [number, setNumber] = useState('1');
+  const [studentId, setStudentId] = useState('');
+  const [selectedAvatar, setSelectedAvatar] = useState('avatar_1');
+
+  // Staff Credential Inputs (strictly empty, no prefilled usernames or weak defaults)
+  const [staffUsername, setStaffUsername] = useState('');
+  const [staffPassword, setStaffPassword] = useState('');
+  const [staffPin, setStaffPin] = useState('');
+
+  // Sync displayName on first Google Sign-In
+  useEffect(() => {
+    if (user?.displayName && !name) {
+      setName(user.displayName);
+    }
+  }, [user?.displayName, name]);
+
+  // Countdown lockout ticker
+  useEffect(() => {
+    if (lockRemaining <= 0) return;
+    const timer = setInterval(() => {
+      setLockRemaining((prev) => {
+        if (prev <= 1) {
+          setFailCount(0);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lockRemaining]);
+
+  const avatars = [
+    { id: 'avatar_1', emoji: '🧑‍🎓', label: 'นักเรียน' },
+    { id: 'avatar_2', emoji: '👧', label: 'สดใส' },
+    { id: 'avatar_3', emoji: '🌱', label: 'ต้นกล้า' },
+    { id: 'avatar_4', emoji: '🦊', label: 'จิ้งจอก' },
+    { id: 'avatar_5', emoji: '🐼', label: 'แพนด้า' },
+  ];
+
+  const handleTabChange = (tab: 'student' | 'reviewer' | 'admin') => {
+    setActiveTab(tab);
+    setErrorMsg('');
+    setPendingElevation(null);
+    setShowSecret(false);
+    setStaffUsername('');
+    setStaffPassword('');
+    setStaffPin('');
+    // Admin defaults to Username & Password as requested; also supports PIN
+    setStaffAuthType(tab === 'admin' ? 'credentials' : 'credentials');
+  };
+
+  // Handle Google Sign In (Students)
   const handleGoogleSignIn = async () => {
     if (!acceptedConsent) {
       setErrorMsg('กรุณากดยินยอมข้อตกลงความเป็นส่วนตัวก่อนเข้าสู่ระบบ');
@@ -45,22 +124,35 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
     try {
       await loginWithGoogle();
     } catch (err: unknown) {
-      console.warn('Google sign-in message:', err);
-      setErrorMsg('ไม่สามารถเปิดหน้าต่าง Google Login ได้ กรุณาตรวจสอบการอนุญาต Pop-up ในเบราว์เซอร์');
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/popup-blocked') {
+        setErrorMsg('เบราว์เซอร์บล็อกหน้าต่าง Google Login กรุณาอนุญาตป๊อปอัปแล้วลองอีกครั้ง');
+      } else if (code === 'auth/popup-closed-by-user') {
+        setErrorMsg('ยกเลิกการเข้าสู่ระบบด้วย Google กรุณากดปุ่มเพื่อลองใหม่');
+      } else {
+        setErrorMsg('เข้าสู่ระบบด้วย Google ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSaveProfile = async (e: React.FormEvent) => {
+  // Complete first-time Student profile
+  const handleStudentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      setErrorMsg('กรุณากรอกชื่อ-นามสกุล');
+      setErrorMsg('กรุณากรอกชื่อ-นามสกุลนักเรียน');
       return;
     }
+    if (!acceptedConsent) {
+      setErrorMsg('กรุณากดยินยอมข้อตกลงความเป็นส่วนตัวก่อนเข้าสู่ระบบ');
+      return;
+    }
+
+    setErrorMsg('');
     setLoading(true);
     try {
-      await updateProfileData({
+      await completeStudentRegistration({
         name: name.trim(),
         className: className.trim(),
         number: number.trim(),
@@ -68,258 +160,558 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
         avatar: selectedAvatar,
       });
     } catch (err) {
-      setErrorMsg('บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่');
+      console.error('Student registration error:', err);
+      setErrorMsg('บันทึกข้อมูลนักเรียนไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
     } finally {
       setLoading(false);
     }
   };
 
-  // Avatar Options
-  const avatars = [
-    { id: 'avatar_1', emoji: '🧑‍🎓', label: 'นักเรียน' },
-    { id: 'avatar_2', emoji: '👧', label: 'สดใส' },
-    { id: 'avatar_3', emoji: '🌱', label: 'ต้นกล้า' },
-    { id: 'avatar_4', emoji: '🦊', label: 'จิ้งจอก' },
-    { id: 'avatar_5', emoji: '🐼', label: 'แพนด้า' },
-  ];
+  // Handle Staff (Admin / Reviewer) Verification & Elevation
+  const handleStaffSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (activeTab === 'student') return;
+
+    if (lockRemaining > 0) {
+      setErrorMsg(`ใส่รหัสผิดครบกำหนด กรุณารออีก ${lockRemaining} วินาที`);
+      return;
+    }
+
+    const secret = staffAuthType === 'pin' ? staffPin.trim() : staffPassword.trim();
+    const uname = staffUsername.trim();
+
+    if (staffAuthType === 'credentials' && (!uname || !secret)) {
+      setErrorMsg('กรุณากรอกชื่อผู้ใช้และรหัสผ่านให้ครบถ้วน');
+      return;
+    }
+    if (staffAuthType === 'pin' && !secret) {
+      setErrorMsg('กรุณากรอกรหัส PIN');
+      return;
+    }
+
+    setErrorMsg('');
+    setLoading(true);
+
+    try {
+      const verifyRes = await verifyStaffSecret(activeTab, staffAuthType, uname, secret);
+      if (!verifyRes.ok || !verifyRes.proofSecret) {
+        const nextFails = failCount + 1;
+        setFailCount(nextFails);
+        if (nextFails >= MAX_FAILED_ATTEMPTS) {
+          setLockRemaining(LOCKOUT_SECONDS);
+          setErrorMsg(`ใส่รหัสผิด ${MAX_FAILED_ATTEMPTS} ครั้ง ระบบระงับชั่วคราว ${LOCKOUT_SECONDS} วินาที`);
+        } else {
+          setErrorMsg(
+            `${verifyRes.reason || 'ข้อมูลเข้าสู่ระบบไม่ถูกต้อง'} (เหลือโอกาสอีก ${
+              MAX_FAILED_ATTEMPTS - nextFails
+            } ครั้ง)`
+          );
+        }
+        setLoading(false);
+        return;
+      }
+
+      setFailCount(0);
+      const elevateRes = await elevateWithGoogleAndProof(activeTab, verifyRes.proofSecret);
+      if (!elevateRes.ok) {
+        if (elevateRes.needsGooglePopup) {
+          setPendingElevation({
+            roleTarget: activeTab,
+            proofSecret: verifyRes.proofSecret,
+          });
+        }
+        setErrorMsg(elevateRes.error || 'เข้าสู่ระบบไม่สำเร็จ');
+      }
+    } catch (err) {
+      console.error('Staff login error:', err);
+      setErrorMsg('เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์ กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Synchronous click retry for Google connection if popup was blocked
+  const handleCompletePendingPopup = async () => {
+    if (!pendingElevation) return;
+    setErrorMsg('');
+    setLoading(true);
+    try {
+      const res = await elevateWithGoogleAndProof(
+        pendingElevation.roleTarget,
+        pendingElevation.proofSecret
+      );
+      if (!res.ok) {
+        setErrorMsg(res.error || 'กรุณาอนุญาตหน้าต่าง Google Sign-In');
+      } else {
+        setPendingElevation(null);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const isStaffTab = activeTab === 'admin' || activeTab === 'reviewer';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-emerald-950/70 p-4 backdrop-blur-sm overflow-y-auto">
-      <div className="relative w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl text-center border-2 border-emerald-100 my-auto">
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-full transition"
-            title="ปิดหน้าต่าง"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
-
+    <div className="w-full min-h-screen bg-slate-100 flex items-center justify-center p-3 py-6">
+      <div className="relative w-full max-w-sm bg-white rounded-3xl p-6 shadow-xl text-center border border-emerald-100 my-auto">
         {/* Mascot Header */}
         <div className="flex justify-center -mt-12 mb-2">
           <div className="w-24 h-24 rounded-full bg-emerald-100/90 border-4 border-white flex items-center justify-center shadow-lg">
-            <Mascot mood={isSettingUpProfile ? 'happy' : 'excited'} size="md" />
+            <Mascot mood={activeTab === 'admin' ? 'excited' : activeTab === 'reviewer' ? 'detective' : 'happy'} size="md" />
           </div>
         </div>
 
-        {isSettingUpProfile ? (
-          /* Profile Setup Screen */
-          <form onSubmit={handleSaveProfile} className="text-left mt-2">
-            <div className="text-center mb-4">
-              <h2 className="text-xl font-bold font-mali text-emerald-800">
-                ยินดีต้อนรับสู่ Trash Point!
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                กรอกข้อมูลนักเรียนของคุณเพื่อเริ่มสะสมแต้ม
-              </p>
-            </div>
+        {/* Brand Header */}
+        <div className="flex items-center justify-center gap-1.5 text-emerald-700 mb-1">
+          <Recycle className="w-5 h-5 animate-spin-slow" />
+          <h1 className="text-2xl font-bold font-mali text-emerald-800">
+            Trash Point
+          </h1>
+        </div>
+        <p className="text-xs text-slate-500 font-medium mb-3">
+          ระบบสะสมคะแนนจากการเก็บและคัดแยกขยะสำหรับโรงเรียน
+        </p>
 
-            {/* Avatar Selector */}
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              เลือกรูปประจำตัว (อวาตาร์):
-            </label>
-            <div className="flex justify-between gap-1 mb-4">
-              {avatars.map((av) => (
+        {/* 3-Role Tab Selector */}
+        <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-2xl mb-4 border border-slate-200/80">
+          <button
+            type="button"
+            onClick={() => handleTabChange('student')}
+            className={`py-2 px-1.5 rounded-xl font-bold text-[11px] transition flex items-center justify-center gap-1 ${
+              activeTab === 'student'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <UserCheck className="w-3.5 h-3.5" />
+            <span>นักเรียน</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTabChange('reviewer')}
+            className={`py-2 px-1.5 rounded-xl font-bold text-[11px] transition flex items-center justify-center gap-1 ${
+              activeTab === 'reviewer'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <ClipboardCheck className="w-3.5 h-3.5" />
+            <span>ครูผู้ตรวจ</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTabChange('admin')}
+            className={`py-2 px-1.5 rounded-xl font-bold text-[11px] transition flex items-center justify-center gap-1 ${
+              activeTab === 'admin'
+                ? 'bg-purple-700 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>ผู้ดูแลระบบ</span>
+          </button>
+        </div>
+
+        {/* =======================================================
+            TAB 1: STUDENT LOGIN / FIRST-TIME REGISTRATION
+           ======================================================= */}
+        {activeTab === 'student' && (
+          <div className="space-y-4 text-left">
+            {!user || !needsStudentRegistration ? (
+              <>
+                <div className="bg-emerald-50 p-3.5 rounded-2xl border border-emerald-200 text-emerald-950 space-y-1">
+                  <h3 className="font-bold text-xs flex items-center gap-1.5">
+                    <UserCheck className="w-4 h-4 text-emerald-700" />
+                    <span>เข้าสู่ระบบสำหรับนักเรียน</span>
+                  </h3>
+                  <p className="text-[11px] text-emerald-800 leading-relaxed">
+                    เข้าสู่ระบบด้วยบัญชี Google เพื่อบันทึกคะแนนสะสมและประวัติการเก็บขยะของคุณอย่างปลอดภัย
+                  </p>
+                </div>
+
+                {/* Privacy Consent Checkbox */}
+                <div className="flex items-start gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+                  <input
+                    id="consentCheck"
+                    type="checkbox"
+                    checked={acceptedConsent}
+                    onChange={(e) => setAcceptedConsent(e.target.checked)}
+                    className="mt-0.5 w-3.5 h-3.5 text-emerald-600 rounded-sm focus:ring-emerald-500"
+                  />
+                  <label htmlFor="consentCheck" className="text-[10px] text-slate-600 leading-tight">
+                    <strong>การยินยอมข้อมูล:</strong> ข้อมูลชื่อ ชั้น และภาพถ่ายขยะจะถูกใช้เพื่อบันทึกกิจกรรมสะสมแต้มของโรงเรียนเท่านั้น
+                  </label>
+                </div>
+
+                {errorMsg && (
+                  <p className="text-[11px] text-red-600 bg-red-50 p-2.5 rounded-xl border border-red-200">
+                    {errorMsg}
+                  </p>
+                )}
+
                 <button
                   type="button"
-                  key={av.id}
-                  onClick={() => setSelectedAvatar(av.id)}
-                  className={`flex-1 py-2 rounded-xl text-xl transition flex flex-col items-center border ${
-                    selectedAvatar === av.id
-                      ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-500/30'
-                      : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
-                  }`}
+                  onClick={handleGoogleSignIn}
+                  disabled={loading}
+                  className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-slate-50 border-2 border-emerald-500 text-slate-800 font-bold text-xs flex items-center justify-center gap-2.5 shadow-sm transition active:scale-98 disabled:opacity-60"
                 >
-                  <span>{av.emoji}</span>
-                  <span className="text-[10px] text-slate-600 mt-0.5">{av.label}</span>
+                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                    />
+                  </svg>
+                  <span>{loading ? 'กำลังเชื่อมต่อ Google...' : 'เข้าสู่ระบบด้วยบัญชี Google'}</span>
                 </button>
-              ))}
-            </div>
+              </>
+            ) : (
+              /* Signed in with Google for first time -> Student registration form */
+              <form onSubmit={handleStudentSubmit} className="space-y-3">
+                <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-200 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-900">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>เชื่อมต่อ Google แล้ว • ลงทะเบียนข้อมูลนักเรียน</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="text-[10px] text-slate-500 hover:text-red-600 flex items-center gap-0.5"
+                    title="เปลี่ยนบัญชี Google"
+                  >
+                    <LogOut className="w-3 h-3" />
+                    <span>ออก</span>
+                  </button>
+                </div>
 
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  ชื่อ-นามสกุล *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="เช่น เด็กชายสมชาย รักสะอาด"
-                  className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
+                {/* Avatar Selector */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    ระดับชั้น (เช่น ม.6/2) *
+                    เลือกรูปประจำตัว:
+                  </label>
+                  <div className="flex justify-between gap-1">
+                    {avatars.map((av) => (
+                      <button
+                        type="button"
+                        key={av.id}
+                        onClick={() => setSelectedAvatar(av.id)}
+                        className={`flex-1 py-1.5 rounded-xl text-lg transition flex flex-col items-center border ${
+                          selectedAvatar === av.id
+                            ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-500/30'
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span>{av.emoji}</span>
+                        <span className="text-[9px] text-slate-600 mt-0.5">{av.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    ชื่อ-นามสกุลนักเรียน *
                   </label>
                   <input
                     type="text"
                     required
-                    value={className}
-                    onChange={(e) => setClassName(e.target.value)}
-                    placeholder="ม.6/2"
-                    className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="กรอกชื่อ-นามสกุลจริง"
+                    className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      ระดับชั้น (เช่น ม.3/1) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={className}
+                      onChange={(e) => setClassName(e.target.value)}
+                      placeholder="ม.3/1"
+                      className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      เลขที่ *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={number}
+                      onChange={(e) => setNumber(e.target.value)}
+                      placeholder="1"
+                      className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    เลขที่ *
+                    รหัสนักเรียน (ถ้ามี)
                   </label>
                   <input
                     type="text"
-                    required
-                    value={number}
-                    onChange={(e) => setNumber(e.target.value)}
-                    placeholder="15"
-                    className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    value={studentId}
+                    onChange={(e) => setStudentId(e.target.value)}
+                    placeholder="กรอกเลขประจำตัวนักเรียน"
+                    className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  รหัสนักเรียน (ถ้ามี)
-                </label>
-                <input
-                  type="text"
-                  value={studentId}
-                  onChange={(e) => setStudentId(e.target.value)}
-                  placeholder="เช่น 54821"
-                  className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-            </div>
+                {errorMsg && (
+                  <p className="text-[11px] text-red-600 bg-red-50 p-2 rounded-lg">
+                    {errorMsg}
+                  </p>
+                )}
 
-            {errorMsg && (
-              <p className="text-xs text-red-600 mt-2 bg-red-50 p-2 rounded-lg">
-                {errorMsg}
-              </p>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition disabled:opacity-60 flex items-center justify-center gap-1.5"
+                >
+                  <span>{loading ? 'กำลังบันทึก...' : 'บันทึกข้อมูลและเริ่มสะสมแต้ม'}</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </form>
             )}
+          </div>
+        )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="mt-5 w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow-md transition disabled:opacity-60"
+        {/* =======================================================
+            TAB 2 & 3: REVIEWER & ADMIN LOGIN (HARDENED)
+           ======================================================= */}
+        {isStaffTab && (
+          <div className="space-y-3.5 text-left">
+            <div
+              className={`p-3 rounded-2xl border ${
+                activeTab === 'admin'
+                  ? 'bg-purple-50 border-purple-200 text-purple-950'
+                  : 'bg-amber-50 border-amber-200 text-amber-950'
+              }`}
             >
-              {loading ? 'กำลังบันทึกข้อมูล...' : 'บันทึกและเริ่มใช้งาน'}
-            </button>
-          </form>
-        ) : (
-          /* Welcome & Sign-in Screen */
-          <div>
-            <div className="flex items-center justify-center gap-1.5 text-emerald-700 mb-1">
-              <Recycle className="w-5 h-5 animate-spin-slow" />
-              <h2 className="text-2xl font-bold font-mali text-emerald-800">
-                Trash Point
-              </h2>
-            </div>
-            <p className="text-xs text-slate-600 font-medium mb-3">
-              ระบบสะสมคะแนนจากการเก็บและคัดแยกขยะ
-            </p>
-
-            {/* Slogan banner */}
-            <div className="bg-emerald-50 border border-emerald-200/80 rounded-2xl p-3 text-[11px] text-emerald-900 leading-relaxed font-medium mb-4">
-              "เก็บขยะ = ทำความดี | สะสมคะแนน = แลกรางวัล | รักษ์โลก = เริ่มที่เรา"
-            </div>
-
-            {/* Google Sign In (Production) */}
-            <button
-              onClick={handleGoogleSignIn}
-              disabled={loading}
-              className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-slate-50 border-2 border-emerald-500 text-slate-800 font-bold text-sm flex items-center justify-center gap-2.5 shadow-sm transition active:scale-98 disabled:opacity-60 mb-3"
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                />
-              </svg>
-              <span>{loading ? 'กำลังเชื่อมต่อบัญชี Google...' : 'เข้าสู่ระบบด้วยบัญชี Google'}</span>
-            </button>
-
-            {/* Divider */}
-            <div className="relative my-3">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-200"></div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  {activeTab === 'admin' ? (
+                    <ShieldCheck className="w-4 h-4 text-purple-700" />
+                  ) : (
+                    <ClipboardCheck className="w-4 h-4 text-amber-700" />
+                  )}
+                  <span className="font-bold text-xs">
+                    {activeTab === 'admin'
+                      ? 'พอร์ทัลผู้ดูแลระบบ (Admin)'
+                      : 'พอร์ทัลครูผู้ตรวจหลักฐาน'}
+                  </span>
+                </div>
+                {user && (
+                  <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                    Google พร้อมแล้ว
+                  </span>
+                )}
               </div>
-              <div className="relative flex justify-center text-[10px] uppercase">
-                <span className="bg-white px-2 text-slate-400 font-semibold">หรือเลือกเข้าสู่ระบบด้วยบัญชีโรงเรียน</span>
-              </div>
+              <p
+                className={`text-[11px] leading-relaxed ${
+                  activeTab === 'admin' ? 'text-purple-700' : 'text-amber-800'
+                }`}
+              >
+                {activeTab === 'admin'
+                  ? 'กรุณายืนยันตัวตนผู้ดูแลระบบเพื่อจัดการสถิติ กติกา และคลังของรางวัล'
+                  : 'กรุณายืนยันตัวตนครูผู้ตรวจเพื่อตรวจสอบหลักฐานและส่งมอบของรางวัล'}
+              </p>
             </div>
 
-            {/* Student Login Button */}
-            <button
-              type="button"
-              onClick={() => {
-                loginAsStudentDirect();
-                if (onClose) onClose();
-              }}
-              className="w-full py-2.5 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition active:scale-98 mb-2"
-            >
-              <UserCheck className="w-4 h-4 text-emerald-200" />
-              <span>เข้าสู่ระบบนักเรียน (โรงเรียน SVC)</span>
-            </button>
-
-            {/* Admin Login Button (65302040006@svc.ac.th) */}
-            <button
-              type="button"
-              onClick={() => {
-                loginAsAdminDirect();
-                if (onClose) onClose();
-              }}
-              className="w-full py-2.5 px-3 rounded-2xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition active:scale-98 mb-3"
-            >
-              <ShieldCheck className="w-4 h-4 text-amber-300" />
-              <span>เข้าสู่ระบบผู้ดูแลระบบ (65302040006@svc.ac.th)</span>
-            </button>
-
-            {/* Privacy Consent Checkbox */}
-            <div className="flex items-start gap-2 text-left bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 mb-2">
-              <input
-                id="consentCheck"
-                type="checkbox"
-                checked={acceptedConsent}
-                onChange={(e) => setAcceptedConsent(e.target.checked)}
-                className="mt-0.5 w-4 h-4 text-emerald-600 rounded-sm focus:ring-emerald-500"
-              />
-              <label htmlFor="consentCheck" className="text-[10px] text-slate-500 leading-tight">
-                <strong>การยินยอมข้อมูลส่วนบุคคล:</strong> ข้อมูลชื่อ ระดับชั้น
-                และภาพถ่ายหลักฐานจะถูกใช้เพื่อการบันทึกกิจกรรมสะสมแต้มของโรงเรียนเท่านั้น
-              </label>
-            </div>
-
-            {onClose && (
+            {/* Auth Mode Switch: Username/Password or Strong PIN */}
+            <div className="flex rounded-xl bg-slate-100 p-1 border border-slate-200">
               <button
                 type="button"
-                onClick={onClose}
-                className="w-full mt-1 py-1 text-xs text-slate-500 hover:text-slate-800 underline transition"
+                onClick={() => {
+                  setStaffAuthType('credentials');
+                  setErrorMsg('');
+                }}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${
+                  staffAuthType === 'credentials'
+                    ? activeTab === 'admin'
+                      ? 'bg-white text-purple-900 shadow-xs'
+                      : 'bg-white text-amber-900 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
               >
-                เข้าชมหน้าแอพก่อน
+                <UserIcon className="w-3.5 h-3.5" />
+                <span>Username & Password</span>
               </button>
-            )}
 
-            {errorMsg && (
-              <p className="text-[11px] text-red-600 bg-red-50 p-2 rounded-lg text-left mt-2">
-                {errorMsg}
-              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setStaffAuthType('pin');
+                  setErrorMsg('');
+                }}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${
+                  staffAuthType === 'pin'
+                    ? activeTab === 'admin'
+                      ? 'bg-white text-purple-900 shadow-xs'
+                      : 'bg-white text-amber-900 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>รหัส PIN</span>
+              </button>
+            </div>
+
+            {pendingElevation ? (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-3 text-center">
+                <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
+                <div>
+                  <p className="text-xs font-bold text-emerald-950">
+                    ยืนยันรหัสผ่านถูกต้องแล้ว
+                  </p>
+                  <p className="text-[11px] text-emerald-700 mt-1">
+                    กดปุ่มด้านล่างเพื่อเชื่อมต่อบัญชี Google สำหรับสิทธิ์บันทึกฐานข้อมูล
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCompletePendingPopup}
+                  disabled={loading}
+                  className={`w-full py-2.5 rounded-xl text-white font-bold text-xs shadow-md transition disabled:opacity-60 ${
+                    activeTab === 'admin'
+                      ? 'bg-purple-700 hover:bg-purple-800'
+                      : 'bg-amber-600 hover:bg-amber-700'
+                  }`}
+                >
+                  {loading ? 'กำลังเชื่อมต่อ...' : 'เชื่อมต่อบัญชี Google เพื่อเข้าใช้งาน'}
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleStaffSubmit} className="space-y-3">
+                {staffAuthType === 'credentials' ? (
+                  <>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        ชื่อผู้ใช้ (Username) *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          required
+                          autoComplete="username"
+                          value={staffUsername}
+                          onChange={(e) => setStaffUsername(e.target.value)}
+                          placeholder="กรอกชื่อผู้ใช้ที่ได้รับ"
+                          className="w-full pl-9 pr-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-600"
+                        />
+                        <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        รหัสผ่าน (Password) *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showSecret ? 'text' : 'password'}
+                          required
+                          autoComplete="current-password"
+                          value={staffPassword}
+                          onChange={(e) => setStaffPassword(e.target.value)}
+                          placeholder="กรอกรหัสผ่าน"
+                          className="w-full pl-9 pr-9 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-600"
+                        />
+                        <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                        <button
+                          type="button"
+                          onClick={() => setShowSecret((v) => !v)}
+                          className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                          aria-label="แสดงหรือซ่อนรหัสผ่าน"
+                        >
+                          {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      ใส่รหัส PIN เจ้าหน้าที่ *
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showSecret ? 'text' : 'password'}
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={12}
+                        required
+                        autoComplete="one-time-code"
+                        value={staffPin}
+                        onChange={(e) => setStaffPin(e.target.value.replace(/\D/g, ''))}
+                        placeholder="กรอกรหัส PIN"
+                        className="w-full pl-9 pr-9 py-3 text-center tracking-[0.25em] font-mono text-base font-bold rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-600 bg-slate-50/50"
+                      />
+                      <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                      <button
+                        type="button"
+                        onClick={() => setShowSecret((v) => !v)}
+                        className="absolute right-2.5 top-3.5 text-slate-400 hover:text-slate-600"
+                        aria-label="แสดงหรือซ่อนรหัส PIN"
+                      >
+                        {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {errorMsg && (
+                  <p className="text-[11px] text-red-600 bg-red-50 p-2.5 rounded-xl border border-red-200 text-center">
+                    {errorMsg}
+                  </p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading || lockRemaining > 0}
+                  className={`w-full py-2.5 rounded-xl text-white font-bold text-xs shadow-md transition disabled:opacity-60 flex items-center justify-center gap-1.5 mt-2 ${
+                    activeTab === 'admin'
+                      ? 'bg-purple-700 hover:bg-purple-800'
+                      : 'bg-amber-600 hover:bg-amber-700'
+                  }`}
+                >
+                  {activeTab === 'admin' ? (
+                    <ShieldCheck className="w-4 h-4 text-amber-300" />
+                  ) : (
+                    <ClipboardCheck className="w-4 h-4 text-amber-100" />
+                  )}
+                  <span>
+                    {lockRemaining > 0
+                      ? `รอ ${lockRemaining} วินาที`
+                      : loading
+                      ? 'กำลังตรวจสอบสิทธิ์...'
+                      : activeTab === 'admin'
+                      ? 'เข้าสู่ระบบผู้ดูแลระบบ'
+                      : 'เข้าสู่ระบบครูผู้ตรวจ'}
+                  </span>
+                </button>
+              </form>
             )}
           </div>
         )}

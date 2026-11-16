@@ -167,7 +167,6 @@ export async function initializeSeedData(): Promise<void> {
     const settingsDoc = await getDoc(doc(db, 'settings', 'app_config'));
     if (!settingsDoc.exists()) {
       await setDoc(doc(db, 'settings', 'app_config'), DEFAULT_SETTINGS);
-      console.log('Seed: Settings initialized');
     }
 
     // 2. Locations
@@ -183,7 +182,6 @@ export async function initializeSeedData(): Promise<void> {
         });
       });
       await batch.commit();
-      console.log('Seed: Locations initialized');
     }
 
     // 3. Rewards
@@ -198,7 +196,6 @@ export async function initializeSeedData(): Promise<void> {
         });
       });
       await batch.commit();
-      console.log('Seed: Rewards initialized');
     }
 
     // 4. Missions
@@ -213,9 +210,8 @@ export async function initializeSeedData(): Promise<void> {
         });
       });
       await batch.commit();
-      console.log('Seed: Missions initialized');
     }
-  } catch (err) {
-    console.error('Seed initialization notice:', err);
+  } catch {
+    // Non-admin clients silently skip initial collection seeding if empty
   }
 }

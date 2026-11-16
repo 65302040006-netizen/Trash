@@ -7,7 +7,6 @@
       "properties": {
         "uid": { "type": "string" },
         "name": { "type": "string" },
-        "email": { "type": "string" },
         "className": { "type": "string" },
         "number": { "type": "string" },
         "studentId": { "type": "string" },
@@ -18,6 +17,7 @@
         "totalPieces": { "type": "number" },
         "certificateEarned": { "type": "boolean" },
         "disabled": { "type": "boolean" },
+        "profileCompleted": { "type": "boolean" },
         "createdAt": { "type": "string" }
       },
       "required": ["uid", "name", "role", "totalEarned", "balance"]
@@ -139,6 +139,19 @@
         "announcement": { "type": "string" }
       },
       "required": ["generalMin", "recycleMin", "certificateTarget"]
+    },
+    "StaffSecurity": {
+      "title": "StaffSecurity",
+      "description": "Salted SHA-256 verification hashes for staff roles",
+      "type": "object",
+      "properties": {
+        "adminCredHash": { "type": "string" },
+        "adminPinHash": { "type": "string" },
+        "revCredHash": { "type": "string" },
+        "revPinHash": { "type": "string" },
+        "overrideActive": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -173,6 +186,10 @@
     "/settings/{settingId}": {
       "schema": "Setting",
       "description": "App scoring rules and settings"
+    },
+    "/staff_security/{docId}": {
+      "schema": "StaffSecurity",
+      "description": "Salted SHA-256 verification hashes for staff authentication"
     }
   }
 }

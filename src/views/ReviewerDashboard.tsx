@@ -61,6 +61,7 @@ export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHo
   const [selectedPresetReason, setSelectedPresetReason] = useState<string>('');
   const [processing, setProcessing] = useState(false);
   const [actionSuccessMsg, setActionSuccessMsg] = useState('');
+  const [actionErrorMsg, setActionErrorMsg] = useState('');
 
   // Reward delivery state
   const [redemptions, setRedemptions] = useState<Redemption[]>([]);
@@ -125,6 +126,7 @@ export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHo
     setRejectReason('');
     setSelectedPresetReason('');
     setActionSuccessMsg('');
+    setActionErrorMsg('');
   };
 
   // Calculate points for approved pieces
@@ -140,6 +142,7 @@ export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHo
   const handleApprove = async () => {
     if (!inspectItem || processing || !profile) return;
     setProcessing(true);
+    setActionErrorMsg('');
 
     try {
       const awardedPoints = calculatePoints(inspectItem, approvedPieces);
@@ -199,10 +202,11 @@ export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHo
     if (!inspectItem || processing || !profile) return;
     const finalReason = rejectReason.trim() || selectedPresetReason;
     if (!finalReason) {
-      alert('กรุณาระบุเหตุผลที่ไม่ผ่าน');
+      setActionErrorMsg('กรุณาระบุหรือเลือกเหตุผลที่ไม่ผ่านก่อนบันทึก');
       return;
     }
 
+    setActionErrorMsg('');
     setProcessing(true);
 
     try {
@@ -232,6 +236,7 @@ export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHo
       }, 900);
     } catch (err) {
       console.error('Reject error:', err);
+      setActionErrorMsg('บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
       setProcessing(false);
     }
   };
@@ -611,6 +616,12 @@ export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHo
                 className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-xl focus:outline-none"
               />
             </div>
+
+            {actionErrorMsg && (
+              <p className="text-xs text-red-700 font-bold bg-red-50 border border-red-200 p-2 rounded-xl text-center">
+                {actionErrorMsg}
+              </p>
+            )}
 
             {actionSuccessMsg && (
               <p className="text-xs text-emerald-700 font-bold bg-emerald-50 p-2 rounded-xl text-center">

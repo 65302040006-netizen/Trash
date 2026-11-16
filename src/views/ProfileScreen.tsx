@@ -29,7 +29,7 @@ interface ProfileScreenProps {
 }
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onNavigateToRole }) => {
-  const { profile, role, updateProfileData, switchRole, logout } = useAuth();
+  const { profile, role, updateProfileData, logout } = useAuth();
   const [showCertificate, setShowCertificate] = useState(false);
   const [submissionCount, setSubmissionCount] = useState<number>(0);
 

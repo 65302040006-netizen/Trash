@@ -21,7 +21,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   unreadCount = 0,
   onOpenAuth,
 }) => {
-  const { profile, role, switchRole, user } = useAuth();
+  const { role } = useAuth();
 
   return (
     <header className="sticky top-0 z-30 bg-emerald-600 text-white shadow-md">
