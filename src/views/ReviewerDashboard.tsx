@@ -26,15 +26,16 @@ import {
   collection,
   query,
   where,
-  getDocs,
   doc,
-  updateDoc,
   runTransaction,
-  increment,
   onSnapshot,
-  addDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import {
+  staffSetDoc,
+  staffUpdateDoc,
+  attachStaffOpToTx,
+} from '../firebase/staffWrite';
 import { formatThaiDateTime } from '../utils/dateFormatter';
 import { Mascot } from '../components/Mascot';
 
@@ -43,7 +44,7 @@ interface ReviewerDashboardProps {
 }
 
 export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHome }) => {
-  const { profile, settings } = useAuth();
+  const { profile, settings, staffSession } = useAuth();
   const [subTab, setSubTab] = useState<'submissions' | 'rewards'>('submissions');
 
   // Submissions state
@@ -149,7 +150,7 @@ export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHo
       const subRef = doc(db, 'submissions', inspectItem.id);
       const userRef = doc(db, 'users', inspectItem.userId);
 
-      // Atomic transaction: update submission status & credit student points
+      // Atomic transaction: update submission status & credit student points with staff_ops proof
       await runTransaction(db, async (transaction) => {
         const userDoc = await transaction.get(userRef);
         const currentBalance = userDoc.exists() ? userDoc.data().balance || 0 : 0;
@@ -173,18 +174,30 @@ export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHo
           totalEarned: newTotal,
           totalPieces: currentPieces + Number(approvedPieces),
           certificateEarned,
+          updatedAt: new Date().toISOString(),
         });
+
+        if (staffSession) {
+          attachStaffOpToTx(transaction, 'submissions', inspectItem.id, staffSession);
+          attachStaffOpToTx(transaction, 'users', inspectItem.userId, staffSession);
+        }
       });
 
       // Send notification to the student
-      await addDoc(collection(db, 'notifications'), {
-        userId: inspectItem.userId,
-        type: 'points',
-        title: 'หลักฐานขยะได้รับการอนุมัติ! 🎉',
-        message: `ครูได้ตรวจสอบรายการ "${inspectItem.locationName}" เรียบร้อย อนุมัติ ${approvedPieces} ชิ้น ได้รับ +${awardedPoints} คะแนน`,
-        read: false,
-        createdAt: new Date().toISOString(),
-      });
+      const notifId = `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      await staffSetDoc(
+        'notifications',
+        notifId,
+        {
+          userId: inspectItem.userId,
+          type: 'points',
+          title: 'หลักฐานขยะได้รับการอนุมัติ!',
+          message: `ครูได้ตรวจสอบรายการ "${inspectItem.locationName}" เรียบร้อย อนุมัติ ${approvedPieces} ชิ้น ได้รับ +${awardedPoints} คะแนน`,
+          read: false,
+          createdAt: new Date().toISOString(),
+        },
+        staffSession
+      );
 
       setActionSuccessMsg('อนุมัติและบันทึกคะแนนให้นักเรียนสำเร็จแล้ว!');
       setTimeout(() => {
@@ -193,6 +206,7 @@ export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHo
       }, 900);
     } catch (err) {
       console.error('Approve error:', err);
+      setActionErrorMsg('อนุมัติรายการไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
       setProcessing(false);
     }
   };
@@ -210,24 +224,34 @@ export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHo
     setProcessing(true);
 
     try {
-      const subRef = doc(db, 'submissions', inspectItem.id);
-      await updateDoc(subRef, {
-        status: 'rejected',
-        rejectReason: finalReason,
-        reviewedBy: profile.uid,
-        reviewerName: profile.name,
-        reviewedAt: new Date().toISOString(),
-      });
+      await staffUpdateDoc(
+        'submissions',
+        inspectItem.id,
+        {
+          status: 'rejected',
+          rejectReason: finalReason,
+          reviewedBy: profile.uid,
+          reviewerName: profile.name,
+          reviewedAt: new Date().toISOString(),
+        },
+        staffSession
+      );
 
       // Send notification to student
-      await addDoc(collection(db, 'notifications'), {
-        userId: inspectItem.userId,
-        type: 'rejected',
-        title: 'รายการเก็บขยะไม่ผ่านการตรวจสอบ ⚠️',
-        message: `รายการที่ ${inspectItem.locationName} ไม่ผ่าน: "${finalReason}"`,
-        read: false,
-        createdAt: new Date().toISOString(),
-      });
+      const notifId = `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      await staffSetDoc(
+        'notifications',
+        notifId,
+        {
+          userId: inspectItem.userId,
+          type: 'rejected',
+          title: 'รายการเก็บขยะไม่ผ่านการตรวจสอบ',
+          message: `รายการที่ ${inspectItem.locationName} ไม่ผ่าน: "${finalReason}"`,
+          read: false,
+          createdAt: new Date().toISOString(),
+        },
+        staffSession
+      );
 
       setActionSuccessMsg('บันทึกสถานะไม่ผ่านเรียบร้อย');
       setTimeout(() => {
@@ -246,12 +270,16 @@ export const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ onBackToHo
     if (!profile || delivering) return;
     setDelivering(redemptionId);
     try {
-      const redRef = doc(db, 'redemptions', redemptionId);
-      await updateDoc(redRef, {
-        status: 'delivered',
-        deliveredBy: profile.name,
-        deliveredAt: new Date().toISOString(),
-      });
+      await staffUpdateDoc(
+        'redemptions',
+        redemptionId,
+        {
+          status: 'delivered',
+          deliveredBy: profile.name,
+          deliveredAt: new Date().toISOString(),
+        },
+        staffSession
+      );
     } catch (err) {
       console.error('Deliver error:', err);
     } finally {

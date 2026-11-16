@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { doc, getDoc, getDocs, collection, setDoc, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection, writeBatch } from 'firebase/firestore';
 import { db } from './config';
 import { TrashLocation, Reward, Mission, AppSettings } from '../types';
+import { StaffAuthSession, attachStaffOpToBatch } from './staffWrite';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   generalMin: 5,
@@ -58,7 +59,7 @@ export const DEFAULT_REWARDS: Omit<Reward, 'id'>[] = [
     icon: 'notebook',
     cost: 20,
     stock: 35,
-    month: 'กุมภาพันธ์',
+    month: 'ประจำเดือน',
     active: true,
   },
   {
@@ -67,7 +68,7 @@ export const DEFAULT_REWARDS: Omit<Reward, 'id'>[] = [
     icon: 'pen',
     cost: 15,
     stock: 50,
-    month: 'กุมภาพันธ์',
+    month: 'ประจำเดือน',
     active: true,
   },
   {
@@ -76,7 +77,7 @@ export const DEFAULT_REWARDS: Omit<Reward, 'id'>[] = [
     icon: 'keychain',
     cost: 35,
     stock: 25,
-    month: 'กุมภาพันธ์',
+    month: 'ประจำเดือน',
     active: true,
   },
   {
@@ -85,7 +86,7 @@ export const DEFAULT_REWARDS: Omit<Reward, 'id'>[] = [
     icon: 'bag',
     cost: 60,
     stock: 15,
-    month: 'กุมภาพันธ์',
+    month: 'ประจำเดือน',
     active: true,
   },
   {
@@ -94,7 +95,7 @@ export const DEFAULT_REWARDS: Omit<Reward, 'id'>[] = [
     icon: 'pencil',
     cost: 25,
     stock: 40,
-    month: 'กุมภาพันธ์',
+    month: 'ประจำเดือน',
     active: true,
   },
   {
@@ -103,7 +104,7 @@ export const DEFAULT_REWARDS: Omit<Reward, 'id'>[] = [
     icon: 'snack',
     cost: 20,
     stock: 50,
-    month: 'กุมภาพันธ์',
+    month: 'ประจำเดือน',
     active: true,
   },
   {
@@ -112,7 +113,7 @@ export const DEFAULT_REWARDS: Omit<Reward, 'id'>[] = [
     icon: 'milk',
     cost: 12,
     stock: 60,
-    month: 'กุมภาพันธ์',
+    month: 'ประจำเดือน',
     active: true,
   },
   {
@@ -121,7 +122,7 @@ export const DEFAULT_REWARDS: Omit<Reward, 'id'>[] = [
     icon: 'toy',
     cost: 90,
     stock: 10,
-    month: 'กุมภาพันธ์',
+    month: 'ประจำเดือน',
     active: true,
   },
 ];
@@ -161,12 +162,16 @@ export const DEFAULT_MISSIONS: Omit<Mission, 'id'>[] = [
   },
 ];
 
-export async function initializeSeedData(): Promise<void> {
+export async function initializeSeedData(staffSession?: StaffAuthSession | null): Promise<void> {
+  if (!staffSession || staffSession.role !== 'admin') return;
   try {
     // 1. Settings
     const settingsDoc = await getDoc(doc(db, 'settings', 'app_config'));
     if (!settingsDoc.exists()) {
-      await setDoc(doc(db, 'settings', 'app_config'), DEFAULT_SETTINGS);
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'settings', 'app_config'), DEFAULT_SETTINGS);
+      attachStaffOpToBatch(batch, 'settings', 'app_config', staffSession);
+      await batch.commit();
     }
 
     // 2. Locations
@@ -180,6 +185,7 @@ export async function initializeSeedData(): Promise<void> {
           id,
           createdAt: new Date().toISOString(),
         });
+        attachStaffOpToBatch(batch, 'locations', id, staffSession);
       });
       await batch.commit();
     }
@@ -194,6 +200,7 @@ export async function initializeSeedData(): Promise<void> {
           ...rew,
           id,
         });
+        attachStaffOpToBatch(batch, 'rewards', id, staffSession);
       });
       await batch.commit();
     }
@@ -208,10 +215,11 @@ export async function initializeSeedData(): Promise<void> {
           ...mis,
           id,
         });
+        attachStaffOpToBatch(batch, 'missions', id, staffSession);
       });
       await batch.commit();
     }
-  } catch {
-    // Non-admin clients silently skip initial collection seeding if empty
+  } catch (err) {
+    console.warn('Seed initialization notice:', err);
   }
 }

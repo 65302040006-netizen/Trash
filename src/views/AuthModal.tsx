@@ -34,14 +34,14 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
     needsStudentRegistration,
     loginWithGoogle,
     completeStudentRegistration,
-    verifyStaffSecret,
-    elevateWithGoogleAndProof,
+    loginStudentDirectly,
+    loginAsStaff,
     logout,
   } = useAuth();
 
   // Active Login Tab: 'student' | 'reviewer' | 'admin'
   const [activeTab, setActiveTab] = useState<'student' | 'reviewer' | 'admin'>('student');
-  const [staffAuthType, setStaffAuthType] = useState<'credentials' | 'pin'>('credentials');
+  const [staffAuthType, setStaffAuthType] = useState<'credentials' | 'pin'>('pin');
 
   // Loading & feedback states
   const [loading, setLoading] = useState(false);
@@ -53,13 +53,7 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
   const [failCount, setFailCount] = useState(0);
   const [lockRemaining, setLockRemaining] = useState(0);
 
-  // Pending popup-blocked staff elevation
-  const [pendingElevation, setPendingElevation] = useState<{
-    roleTarget: 'admin' | 'reviewer';
-    proofSecret: string;
-  } | null>(null);
-
-  // Student Registration Form State (shown after Google login for new accounts)
+  // Student Form State
   const [name, setName] = useState('');
   const [className, setClassName] = useState('ม.1/1');
   const [number, setNumber] = useState('1');
@@ -71,7 +65,7 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
   const [staffPassword, setStaffPassword] = useState('');
   const [staffPin, setStaffPin] = useState('');
 
-  // Sync displayName on first Google Sign-In
+  // Sync displayName if signed in via Google
   useEffect(() => {
     if (user?.displayName && !name) {
       setName(user.displayName);
@@ -104,16 +98,15 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
   const handleTabChange = (tab: 'student' | 'reviewer' | 'admin') => {
     setActiveTab(tab);
     setErrorMsg('');
-    setPendingElevation(null);
     setShowSecret(false);
     setStaffUsername('');
     setStaffPassword('');
     setStaffPin('');
-    // Admin defaults to Username & Password as requested; also supports PIN
-    setStaffAuthType(tab === 'admin' ? 'credentials' : 'credentials');
+    // Both PIN and Username/Password are supported cleanly
+    setStaffAuthType(tab === 'admin' ? 'credentials' : 'pin');
   };
 
-  // Handle Google Sign In (Students)
+  // Optional Google Sign In (Students)
   const handleGoogleSignIn = async () => {
     if (!acceptedConsent) {
       setErrorMsg('กรุณากดยินยอมข้อตกลงความเป็นส่วนตัวก่อนเข้าสู่ระบบ');
@@ -123,21 +116,14 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
     setLoading(true);
     try {
       await loginWithGoogle();
-    } catch (err: unknown) {
-      const code = (err as { code?: string })?.code || '';
-      if (code === 'auth/popup-blocked') {
-        setErrorMsg('เบราว์เซอร์บล็อกหน้าต่าง Google Login กรุณาอนุญาตป๊อปอัปแล้วลองอีกครั้ง');
-      } else if (code === 'auth/popup-closed-by-user') {
-        setErrorMsg('ยกเลิกการเข้าสู่ระบบด้วย Google กรุณากดปุ่มเพื่อลองใหม่');
-      } else {
-        setErrorMsg('เข้าสู่ระบบด้วย Google ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
-      }
+    } catch {
+      setErrorMsg('ไม่สามารถเข้าสู่ระบบด้วย Google ในอุปกรณ์นี้ได้ สามารถกรอกข้อมูลนักเรียนด้านล่างเพื่อเข้าใช้งานได้ทันที');
     } finally {
       setLoading(false);
     }
   };
 
-  // Complete first-time Student profile
+  // Student registration / direct login submit (works with or without Google)
   const handleStudentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
@@ -152,22 +138,31 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
     setErrorMsg('');
     setLoading(true);
     try {
-      await completeStudentRegistration({
+      const payload = {
         name: name.trim(),
         className: className.trim(),
         number: number.trim(),
         studentId: studentId.trim(),
         avatar: selectedAvatar,
-      });
+      };
+      if (user && needsStudentRegistration) {
+        await completeStudentRegistration(payload);
+      } else {
+        await loginStudentDirectly(payload);
+      }
     } catch (err) {
-      console.error('Student registration error:', err);
-      setErrorMsg('บันทึกข้อมูลนักเรียนไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+      console.error('Student login error:', err);
+      setErrorMsg(
+        err instanceof Error && err.message.includes('ระงับ')
+          ? err.message
+          : 'เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  // Handle Staff (Admin / Reviewer) Verification & Elevation
+  // Direct Staff (Admin / Reviewer) Login — NO Google/Email popup needed!
   const handleStaffSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (activeTab === 'student') return;
@@ -193,8 +188,8 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
     setLoading(true);
 
     try {
-      const verifyRes = await verifyStaffSecret(activeTab, staffAuthType, uname, secret);
-      if (!verifyRes.ok || !verifyRes.proofSecret) {
+      const res = await loginAsStaff(activeTab, staffAuthType, uname, secret);
+      if (!res.ok) {
         const nextFails = failCount + 1;
         setFailCount(nextFails);
         if (nextFails >= MAX_FAILED_ATTEMPTS) {
@@ -202,49 +197,17 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
           setErrorMsg(`ใส่รหัสผิด ${MAX_FAILED_ATTEMPTS} ครั้ง ระบบระงับชั่วคราว ${LOCKOUT_SECONDS} วินาที`);
         } else {
           setErrorMsg(
-            `${verifyRes.reason || 'ข้อมูลเข้าสู่ระบบไม่ถูกต้อง'} (เหลือโอกาสอีก ${
+            `${res.reason || 'ข้อมูลเข้าสู่ระบบไม่ถูกต้อง'} (เหลือโอกาสอีก ${
               MAX_FAILED_ATTEMPTS - nextFails
             } ครั้ง)`
           );
         }
-        setLoading(false);
-        return;
-      }
-
-      setFailCount(0);
-      const elevateRes = await elevateWithGoogleAndProof(activeTab, verifyRes.proofSecret);
-      if (!elevateRes.ok) {
-        if (elevateRes.needsGooglePopup) {
-          setPendingElevation({
-            roleTarget: activeTab,
-            proofSecret: verifyRes.proofSecret,
-          });
-        }
-        setErrorMsg(elevateRes.error || 'เข้าสู่ระบบไม่สำเร็จ');
+      } else {
+        setFailCount(0);
       }
     } catch (err) {
       console.error('Staff login error:', err);
-      setErrorMsg('เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์ กรุณาลองใหม่อีกครั้ง');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Synchronous click retry for Google connection if popup was blocked
-  const handleCompletePendingPopup = async () => {
-    if (!pendingElevation) return;
-    setErrorMsg('');
-    setLoading(true);
-    try {
-      const res = await elevateWithGoogleAndProof(
-        pendingElevation.roleTarget,
-        pendingElevation.proofSecret
-      );
-      if (!res.ok) {
-        setErrorMsg(res.error || 'กรุณาอนุญาตหน้าต่าง Google Sign-In');
-      } else {
-        setPendingElevation(null);
-      }
+      setErrorMsg('เกิดข้อผิดพลาดในการเข้าสู่ระบบ กรุณาลองใหม่อีกครั้ง');
     } finally {
       setLoading(false);
     }
@@ -258,7 +221,16 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
         {/* Mascot Header */}
         <div className="flex justify-center -mt-12 mb-2">
           <div className="w-24 h-24 rounded-full bg-emerald-100/90 border-4 border-white flex items-center justify-center shadow-lg">
-            <Mascot mood={activeTab === 'admin' ? 'excited' : activeTab === 'reviewer' ? 'detective' : 'happy'} size="md" />
+            <Mascot
+              mood={
+                activeTab === 'admin'
+                  ? 'excited'
+                  : activeTab === 'reviewer'
+                  ? 'detective'
+                  : 'happy'
+              }
+              size="md"
+            />
           </div>
         </div>
 
@@ -315,48 +287,31 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
           </button>
         </div>
 
-        {/* =======================================================
-            TAB 1: STUDENT LOGIN / FIRST-TIME REGISTRATION
-           ======================================================= */}
+        {/* TAB 1: STUDENT LOGIN */}
         {activeTab === 'student' && (
-          <div className="space-y-4 text-left">
-            {!user || !needsStudentRegistration ? (
+          <div className="space-y-3.5 text-left">
+            {user && needsStudentRegistration ? (
+              <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-200 flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-900">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>เชื่อมต่อ Google แล้ว • กรอกข้อมูลนักเรียน</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="text-[10px] text-slate-500 hover:text-red-600 flex items-center gap-0.5"
+                >
+                  <LogOut className="w-3 h-3" />
+                  <span>ออก</span>
+                </button>
+              </div>
+            ) : (
               <>
-                <div className="bg-emerald-50 p-3.5 rounded-2xl border border-emerald-200 text-emerald-950 space-y-1">
-                  <h3 className="font-bold text-xs flex items-center gap-1.5">
-                    <UserCheck className="w-4 h-4 text-emerald-700" />
-                    <span>เข้าสู่ระบบสำหรับนักเรียน</span>
-                  </h3>
-                  <p className="text-[11px] text-emerald-800 leading-relaxed">
-                    เข้าสู่ระบบด้วยบัญชี Google เพื่อบันทึกคะแนนสะสมและประวัติการเก็บขยะของคุณอย่างปลอดภัย
-                  </p>
-                </div>
-
-                {/* Privacy Consent Checkbox */}
-                <div className="flex items-start gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
-                  <input
-                    id="consentCheck"
-                    type="checkbox"
-                    checked={acceptedConsent}
-                    onChange={(e) => setAcceptedConsent(e.target.checked)}
-                    className="mt-0.5 w-3.5 h-3.5 text-emerald-600 rounded-sm focus:ring-emerald-500"
-                  />
-                  <label htmlFor="consentCheck" className="text-[10px] text-slate-600 leading-tight">
-                    <strong>การยินยอมข้อมูล:</strong> ข้อมูลชื่อ ชั้น และภาพถ่ายขยะจะถูกใช้เพื่อบันทึกกิจกรรมสะสมแต้มของโรงเรียนเท่านั้น
-                  </label>
-                </div>
-
-                {errorMsg && (
-                  <p className="text-[11px] text-red-600 bg-red-50 p-2.5 rounded-xl border border-red-200">
-                    {errorMsg}
-                  </p>
-                )}
-
                 <button
                   type="button"
                   onClick={handleGoogleSignIn}
                   disabled={loading}
-                  className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-slate-50 border-2 border-emerald-500 text-slate-800 font-bold text-xs flex items-center justify-center gap-2.5 shadow-sm transition active:scale-98 disabled:opacity-60"
+                  className="w-full py-2.5 px-4 rounded-2xl bg-white hover:bg-slate-50 border-2 border-emerald-500 text-slate-800 font-bold text-xs flex items-center justify-center gap-2.5 shadow-xs transition active:scale-98 disabled:opacity-60"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24">
                     <path
@@ -376,130 +331,134 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
                       d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                     />
                   </svg>
-                  <span>{loading ? 'กำลังเชื่อมต่อ Google...' : 'เข้าสู่ระบบด้วยบัญชี Google'}</span>
+                  <span>เข้าสู่ระบบด้วยบัญชี Google</span>
                 </button>
+
+                <div className="relative my-1.5">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-slate-200"></div>
+                  </div>
+                  <div className="relative flex justify-center text-[10px]">
+                    <span className="bg-white px-2 text-slate-400 font-semibold">
+                      หรือ กรอกข้อมูลนักเรียน (ไม่ต้องใช้อีเมล)
+                    </span>
+                  </div>
+                </div>
               </>
-            ) : (
-              /* Signed in with Google for first time -> Student registration form */
-              <form onSubmit={handleStudentSubmit} className="space-y-3">
-                <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-200 flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-900">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>เชื่อมต่อ Google แล้ว • ลงทะเบียนข้อมูลนักเรียน</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={logout}
-                    className="text-[10px] text-slate-500 hover:text-red-600 flex items-center gap-0.5"
-                    title="เปลี่ยนบัญชี Google"
-                  >
-                    <LogOut className="w-3 h-3" />
-                    <span>ออก</span>
-                  </button>
-                </div>
+            )}
 
-                {/* Avatar Selector */}
+            <form onSubmit={handleStudentSubmit} className="space-y-2.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  เลือกรูปประจำตัว:
+                </label>
+                <div className="flex justify-between gap-1">
+                  {avatars.map((av) => (
+                    <button
+                      type="button"
+                      key={av.id}
+                      onClick={() => setSelectedAvatar(av.id)}
+                      className={`flex-1 py-1.5 rounded-xl text-lg transition flex flex-col items-center border ${
+                        selectedAvatar === av.id
+                          ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-500/30'
+                          : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span>{av.emoji}</span>
+                      <span className="text-[9px] text-slate-600 mt-0.5">{av.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  ชื่อ-นามสกุลนักเรียน *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="กรอกชื่อ-นามสกุลจริง"
+                  className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    เลือกรูปประจำตัว:
-                  </label>
-                  <div className="flex justify-between gap-1">
-                    {avatars.map((av) => (
-                      <button
-                        type="button"
-                        key={av.id}
-                        onClick={() => setSelectedAvatar(av.id)}
-                        className={`flex-1 py-1.5 rounded-xl text-lg transition flex flex-col items-center border ${
-                          selectedAvatar === av.id
-                            ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-500/30'
-                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
-                        }`}
-                      >
-                        <span>{av.emoji}</span>
-                        <span className="text-[9px] text-slate-600 mt-0.5">{av.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    ชื่อ-นามสกุลนักเรียน *
+                    ระดับชั้น (เช่น ม.3/1) *
                   </label>
                   <input
                     type="text"
                     required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="กรอกชื่อ-นามสกุลจริง"
+                    value={className}
+                    onChange={(e) => setClassName(e.target.value)}
+                    placeholder="ม.3/1"
                     className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      ระดับชั้น (เช่น ม.3/1) *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={className}
-                      onChange={(e) => setClassName(e.target.value)}
-                      placeholder="ม.3/1"
-                      className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      เลขที่ *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={number}
-                      onChange={(e) => setNumber(e.target.value)}
-                      placeholder="1"
-                      className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-                </div>
-
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    รหัสนักเรียน (ถ้ามี)
+                    เลขที่ *
                   </label>
                   <input
                     type="text"
-                    value={studentId}
-                    onChange={(e) => setStudentId(e.target.value)}
-                    placeholder="กรอกเลขประจำตัวนักเรียน"
+                    required
+                    value={number}
+                    onChange={(e) => setNumber(e.target.value)}
+                    placeholder="1"
                     className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
+              </div>
 
-                {errorMsg && (
-                  <p className="text-[11px] text-red-600 bg-red-50 p-2 rounded-lg">
-                    {errorMsg}
-                  </p>
-                )}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  รหัสนักเรียน (ถ้ามี • ใช้กู้คืนคะแนนเดิมได้)
+                </label>
+                <input
+                  type="text"
+                  value={studentId}
+                  onChange={(e) => setStudentId(e.target.value)}
+                  placeholder="กรอกเลขประจำตัวนักเรียน"
+                  className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition disabled:opacity-60 flex items-center justify-center gap-1.5"
-                >
-                  <span>{loading ? 'กำลังบันทึก...' : 'บันทึกข้อมูลและเริ่มสะสมแต้ม'}</span>
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </form>
-            )}
+              <div className="flex items-start gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+                <input
+                  id="consentCheck"
+                  type="checkbox"
+                  checked={acceptedConsent}
+                  onChange={(e) => setAcceptedConsent(e.target.checked)}
+                  className="mt-0.5 w-3.5 h-3.5 text-emerald-600 rounded-sm focus:ring-emerald-500"
+                />
+                <label htmlFor="consentCheck" className="text-[10px] text-slate-600 leading-tight">
+                  <strong>การยินยอมข้อมูล:</strong> ข้อมูลชื่อ ชั้น และภาพถ่ายขยะจะถูกใช้เพื่อบันทึกกิจกรรมสะสมแต้มของโรงเรียนเท่านั้น
+                </label>
+              </div>
+
+              {errorMsg && (
+                <p className="text-[11px] text-red-600 bg-red-50 p-2 rounded-lg border border-red-200">
+                  {errorMsg}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition disabled:opacity-60 flex items-center justify-center gap-1.5"
+              >
+                <span>{loading ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบและเริ่มสะสมแต้ม'}</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </form>
           </div>
         )}
 
-        {/* =======================================================
-            TAB 2 & 3: REVIEWER & ADMIN LOGIN (HARDENED)
-           ======================================================= */}
+        {/* TAB 2 & 3: REVIEWER & ADMIN LOGIN (DIRECT PIN / CREDENTIALS, NO EMAIL NEEDED) */}
         {isStaffTab && (
           <div className="space-y-3.5 text-left">
             <div
@@ -509,24 +468,17 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
                   : 'bg-amber-50 border-amber-200 text-amber-950'
               }`}
             >
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center gap-1.5">
-                  {activeTab === 'admin' ? (
-                    <ShieldCheck className="w-4 h-4 text-purple-700" />
-                  ) : (
-                    <ClipboardCheck className="w-4 h-4 text-amber-700" />
-                  )}
-                  <span className="font-bold text-xs">
-                    {activeTab === 'admin'
-                      ? 'พอร์ทัลผู้ดูแลระบบ (Admin)'
-                      : 'พอร์ทัลครูผู้ตรวจหลักฐาน'}
-                  </span>
-                </div>
-                {user && (
-                  <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-                    Google พร้อมแล้ว
-                  </span>
+              <div className="flex items-center gap-1.5 mb-1">
+                {activeTab === 'admin' ? (
+                  <ShieldCheck className="w-4 h-4 text-purple-700" />
+                ) : (
+                  <ClipboardCheck className="w-4 h-4 text-amber-700" />
                 )}
+                <span className="font-bold text-xs">
+                  {activeTab === 'admin'
+                    ? 'พอร์ทัลผู้ดูแลระบบ (Admin)'
+                    : 'พอร์ทัลครูผู้ตรวจหลักฐาน'}
+                </span>
               </div>
               <p
                 className={`text-[11px] leading-relaxed ${
@@ -534,31 +486,13 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
                 }`}
               >
                 {activeTab === 'admin'
-                  ? 'กรุณายืนยันตัวตนผู้ดูแลระบบเพื่อจัดการสถิติ กติกา และคลังของรางวัล'
-                  : 'กรุณายืนยันตัวตนครูผู้ตรวจเพื่อตรวจสอบหลักฐานและส่งมอบของรางวัล'}
+                  ? 'ใส่ Username & Password หรือรหัส PIN เพื่อเข้าสู่ระบบทันที (ไม่ต้องใช้อีเมล)'
+                  : 'ใส่รหัส PIN หรือ Username & Password เพื่อเข้าตรวจหลักฐานทันที (ไม่ต้องใช้อีเมล)'}
               </p>
             </div>
 
-            {/* Auth Mode Switch: Username/Password or Strong PIN */}
+            {/* Auth Mode Switch */}
             <div className="flex rounded-xl bg-slate-100 p-1 border border-slate-200">
-              <button
-                type="button"
-                onClick={() => {
-                  setStaffAuthType('credentials');
-                  setErrorMsg('');
-                }}
-                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${
-                  staffAuthType === 'credentials'
-                    ? activeTab === 'admin'
-                      ? 'bg-white text-purple-900 shadow-xs'
-                      : 'bg-white text-amber-900 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <UserIcon className="w-3.5 h-3.5" />
-                <span>Username & Password</span>
-              </button>
-
               <button
                 type="button"
                 onClick={() => {
@@ -576,143 +510,135 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
                 <KeyRound className="w-3.5 h-3.5" />
                 <span>รหัส PIN</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setStaffAuthType('credentials');
+                  setErrorMsg('');
+                }}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${
+                  staffAuthType === 'credentials'
+                    ? activeTab === 'admin'
+                      ? 'bg-white text-purple-900 shadow-xs'
+                      : 'bg-white text-amber-900 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <UserIcon className="w-3.5 h-3.5" />
+                <span>Username & Password</span>
+              </button>
             </div>
 
-            {pendingElevation ? (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-3 text-center">
-                <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-                <div>
-                  <p className="text-xs font-bold text-emerald-950">
-                    ยืนยันรหัสผ่านถูกต้องแล้ว
-                  </p>
-                  <p className="text-[11px] text-emerald-700 mt-1">
-                    กดปุ่มด้านล่างเพื่อเชื่อมต่อบัญชี Google สำหรับสิทธิ์บันทึกฐานข้อมูล
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleCompletePendingPopup}
-                  disabled={loading}
-                  className={`w-full py-2.5 rounded-xl text-white font-bold text-xs shadow-md transition disabled:opacity-60 ${
-                    activeTab === 'admin'
-                      ? 'bg-purple-700 hover:bg-purple-800'
-                      : 'bg-amber-600 hover:bg-amber-700'
-                  }`}
-                >
-                  {loading ? 'กำลังเชื่อมต่อ...' : 'เชื่อมต่อบัญชี Google เพื่อเข้าใช้งาน'}
-                </button>
-              </div>
-            ) : (
-              <form onSubmit={handleStaffSubmit} className="space-y-3">
-                {staffAuthType === 'credentials' ? (
-                  <>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        ชื่อผู้ใช้ (Username) *
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          required
-                          autoComplete="username"
-                          value={staffUsername}
-                          onChange={(e) => setStaffUsername(e.target.value)}
-                          placeholder="กรอกชื่อผู้ใช้ที่ได้รับ"
-                          className="w-full pl-9 pr-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-600"
-                        />
-                        <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        รหัสผ่าน (Password) *
-                      </label>
-                      <div className="relative">
-                        <input
-                          type={showSecret ? 'text' : 'password'}
-                          required
-                          autoComplete="current-password"
-                          value={staffPassword}
-                          onChange={(e) => setStaffPassword(e.target.value)}
-                          placeholder="กรอกรหัสผ่าน"
-                          className="w-full pl-9 pr-9 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-600"
-                        />
-                        <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                        <button
-                          type="button"
-                          onClick={() => setShowSecret((v) => !v)}
-                          className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
-                          aria-label="แสดงหรือซ่อนรหัสผ่าน"
-                        >
-                          {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </button>
-                      </div>
-                    </div>
-                  </>
-                ) : (
+            <form onSubmit={handleStaffSubmit} className="space-y-3">
+              {staffAuthType === 'credentials' ? (
+                <>
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      ใส่รหัส PIN เจ้าหน้าที่ *
+                      ชื่อผู้ใช้ (Username) *
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        required
+                        autoComplete="username"
+                        value={staffUsername}
+                        onChange={(e) => setStaffUsername(e.target.value)}
+                        placeholder="กรอกชื่อผู้ใช้ที่ได้รับ"
+                        className="w-full pl-9 pr-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-600"
+                      />
+                      <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      รหัสผ่าน (Password) *
                     </label>
                     <div className="relative">
                       <input
                         type={showSecret ? 'text' : 'password'}
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        maxLength={12}
                         required
-                        autoComplete="one-time-code"
-                        value={staffPin}
-                        onChange={(e) => setStaffPin(e.target.value.replace(/\D/g, ''))}
-                        placeholder="กรอกรหัส PIN"
-                        className="w-full pl-9 pr-9 py-3 text-center tracking-[0.25em] font-mono text-base font-bold rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-600 bg-slate-50/50"
+                        autoComplete="current-password"
+                        value={staffPassword}
+                        onChange={(e) => setStaffPassword(e.target.value)}
+                        placeholder="กรอกรหัสผ่าน"
+                        className="w-full pl-9 pr-9 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-600"
                       />
-                      <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                      <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                       <button
                         type="button"
                         onClick={() => setShowSecret((v) => !v)}
-                        className="absolute right-2.5 top-3.5 text-slate-400 hover:text-slate-600"
-                        aria-label="แสดงหรือซ่อนรหัส PIN"
+                        className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                        aria-label="แสดงหรือซ่อนรหัสผ่าน"
                       >
                         {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </div>
                   </div>
-                )}
+                </>
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    ใส่รหัส PIN เจ้าหน้าที่ *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showSecret ? 'text' : 'password'}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={12}
+                      required
+                      autoComplete="one-time-code"
+                      value={staffPin}
+                      onChange={(e) => setStaffPin(e.target.value.replace(/\D/g, ''))}
+                      placeholder="กรอกรหัส PIN"
+                      className="w-full pl-9 pr-9 py-3 text-center tracking-[0.25em] font-mono text-base font-bold rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-600 bg-slate-50/50"
+                    />
+                    <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                    <button
+                      type="button"
+                      onClick={() => setShowSecret((v) => !v)}
+                      className="absolute right-2.5 top-3.5 text-slate-400 hover:text-slate-600"
+                      aria-label="แสดงหรือซ่อนรหัส PIN"
+                    >
+                      {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              )}
 
-                {errorMsg && (
-                  <p className="text-[11px] text-red-600 bg-red-50 p-2.5 rounded-xl border border-red-200 text-center">
-                    {errorMsg}
-                  </p>
-                )}
+              {errorMsg && (
+                <p className="text-[11px] text-red-600 bg-red-50 p-2.5 rounded-xl border border-red-200 text-center">
+                  {errorMsg}
+                </p>
+              )}
 
-                <button
-                  type="submit"
-                  disabled={loading || lockRemaining > 0}
-                  className={`w-full py-2.5 rounded-xl text-white font-bold text-xs shadow-md transition disabled:opacity-60 flex items-center justify-center gap-1.5 mt-2 ${
-                    activeTab === 'admin'
-                      ? 'bg-purple-700 hover:bg-purple-800'
-                      : 'bg-amber-600 hover:bg-amber-700'
-                  }`}
-                >
-                  {activeTab === 'admin' ? (
-                    <ShieldCheck className="w-4 h-4 text-amber-300" />
-                  ) : (
-                    <ClipboardCheck className="w-4 h-4 text-amber-100" />
-                  )}
-                  <span>
-                    {lockRemaining > 0
-                      ? `รอ ${lockRemaining} วินาที`
-                      : loading
-                      ? 'กำลังตรวจสอบสิทธิ์...'
-                      : activeTab === 'admin'
-                      ? 'เข้าสู่ระบบผู้ดูแลระบบ'
-                      : 'เข้าสู่ระบบครูผู้ตรวจ'}
-                  </span>
-                </button>
-              </form>
-            )}
+              <button
+                type="submit"
+                disabled={loading || lockRemaining > 0}
+                className={`w-full py-2.5 rounded-xl text-white font-bold text-xs shadow-md transition disabled:opacity-60 flex items-center justify-center gap-1.5 mt-2 ${
+                  activeTab === 'admin'
+                    ? 'bg-purple-700 hover:bg-purple-800'
+                    : 'bg-amber-600 hover:bg-amber-700'
+                }`}
+              >
+                {activeTab === 'admin' ? (
+                  <ShieldCheck className="w-4 h-4 text-amber-300" />
+                ) : (
+                  <ClipboardCheck className="w-4 h-4 text-amber-100" />
+                )}
+                <span>
+                  {lockRemaining > 0
+                    ? `รอ ${lockRemaining} วินาที`
+                    : loading
+                    ? 'กำลังตรวจสอบสิทธิ์...'
+                    : activeTab === 'admin'
+                    ? 'เข้าสู่ระบบผู้ดูแลระบบ'
+                    : 'เข้าสู่ระบบครูผู้ตรวจ'}
+                </span>
+              </button>
+            </form>
           </div>
         )}
       </div>

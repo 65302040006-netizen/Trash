@@ -50,181 +50,211 @@ service cloud.firestore {
         get(/databases/$(database)/documents/private_security/staff_proofs).data.get('overrideActive', false) == true;
     }
 
+    function isAdminProofHex(proofHex) {
+      return hasRotatedProofs()
+        ? (
+            proofHex == get(/databases/$(database)/documents/private_security/staff_proofs).data.get('adminCredProofHash', '') ||
+            proofHex == get(/databases/$(database)/documents/private_security/staff_proofs).data.get('adminPinProofHash', '')
+          )
+        : (
+            proofHex == '37b5e2fb13fd22e68ebb7b4758b818fdcc00eda39d24ebf3adfdba909fd95939' ||
+            proofHex == '1606a2cb998df5af2c3ca1393931fadd841ffe852f4f75eaae2c1f74643e4923'
+          );
+    }
+
+    function isReviewerProofHex(proofHex) {
+      return hasRotatedProofs()
+        ? (
+            proofHex == get(/databases/$(database)/documents/private_security/staff_proofs).data.get('revCredProofHash', '') ||
+            proofHex == get(/databases/$(database)/documents/private_security/staff_proofs).data.get('revPinProofHash', '')
+          )
+        : (
+            proofHex == 'a4dac78e849c5b67640ee8b011a8c55bbec1e8f130169b9dd4600f5172fe2680' ||
+            proofHex == 'e0b47a82d8ebe6eb4bcb9f28d250542fc4bff3df17716cc3beca5b6a817c6237'
+          );
+    }
+
+    function isValidOpProofData(data, minRole) {
+      let proof = data.get('authProof', '');
+      let proofHex = hashing.sha256(('TP_PROOF_V3:' + proof).toUtf8()).toHexString().lower();
+      let opRole = data.get('role', '');
+      return proof is string && proof.size() >= 32 && proof.size() <= 128 &&
+        data.get('opTime', null) == request.time &&
+        (
+          minRole == 'admin'
+            ? (opRole == 'admin' && isAdminProofHex(proofHex))
+            : (
+                (opRole == 'admin' && isAdminProofHex(proofHex)) ||
+                (opRole == 'reviewer' && isReviewerProofHex(proofHex))
+              )
+        );
+    }
+
+    function hasValidStaffOp(colName, docId, minRole) {
+      let opPath = /databases/$(database)/documents/staff_ops/$(colName + '__' + docId);
+      return existsAfter(opPath) && isValidOpProofData(getAfter(opPath).data, minRole);
+    }
+
     function validAdminProof() {
       let proof = incoming().get('authProof', '');
       let proofHex = hashing.sha256(('TP_PROOF_V3:' + proof).toUtf8()).toHexString().lower();
-      return proof is string && proof.size() >= 32 && proof.size() <= 128 && (
-        hasRotatedProofs()
-          ? (
-              proofHex == get(/databases/$(database)/documents/private_security/staff_proofs).data.get('adminCredProofHash', '') ||
-              proofHex == get(/databases/$(database)/documents/private_security/staff_proofs).data.get('adminPinProofHash', '')
-            )
-          : (
-              proofHex == '37b5e2fb13fd22e68ebb7b4758b818fdcc00eda39d24ebf3adfdba909fd95939' ||
-              proofHex == '1606a2cb998df5af2c3ca1393931fadd841ffe852f4f75eaae2c1f74643e4923'
-            )
-      );
+      return proof is string && proof.size() >= 32 && proof.size() <= 128 && isAdminProofHex(proofHex);
     }
 
     function validReviewerProof() {
       let proof = incoming().get('authProof', '');
       let proofHex = hashing.sha256(('TP_PROOF_V3:' + proof).toUtf8()).toHexString().lower();
-      return proof is string && proof.size() >= 32 && proof.size() <= 128 && (
-        hasRotatedProofs()
-          ? (
-              proofHex == get(/databases/$(database)/documents/private_security/staff_proofs).data.get('revCredProofHash', '') ||
-              proofHex == get(/databases/$(database)/documents/private_security/staff_proofs).data.get('revPinProofHash', '')
-            )
-          : (
-              proofHex == 'a4dac78e849c5b67640ee8b011a8c55bbec1e8f130169b9dd4600f5172fe2680' ||
-              proofHex == 'e0b47a82d8ebe6eb4bcb9f28d250542fc4bff3df17716cc3beca5b6a817c6237'
-            )
-      );
+      return proof is string && proof.size() >= 32 && proof.size() <= 128 && isReviewerProofHex(proofHex);
     }
 
-    // Server-side/Admin-only secret proof digests (unreadable by any client)
+    // Secret proof digests (never readable by clients)
     match /private_security/{docId} {
       allow read: if false;
-      allow write: if isValidId(docId) && isAdmin();
+      allow create, update: if isValidId(docId) && (
+        isAdmin() || hasValidStaffOp('private_security', docId, 'admin')
+      );
+      allow delete: if false;
     }
 
-    // Publicly gettable salted verification hashes (lists disabled, writes Admin-only)
+    // Salted verification hashes for login matching (never listable)
     match /staff_security/{docId} {
       allow get: if isValidId(docId);
       allow list: if false;
-      allow write: if isValidId(docId) && isAdmin();
+      allow create, update: if isValidId(docId) && (
+        isAdmin() || hasValidStaffOp('staff_security', docId, 'admin')
+      );
+      allow delete: if false;
     }
 
-    // Admin role elevation protected by double-hashed cryptographic proof
+    // Ephemeral atomic batch proof verifier (never readable by clients)
+    match /staff_ops/{opId} {
+      allow read: if false;
+      allow create, update: if isValidId(opId) && isValidOpProofData(incoming(), incoming().get('role', ''));
+      allow delete: if false;
+    }
+
+    // Admin & Reviewer role marker docs
     match /admins/{userId} {
       allow get: if isValidId(userId) && (isCurrentUser(userId) || isAdmin());
       allow list: if isAdmin();
       allow create, update: if isValidId(userId) && (
         isAdmin() ||
+        hasValidStaffOp('admins', userId, 'admin') ||
         (isCurrentUser(userId) && validAdminProof())
       );
-      allow delete: if isValidId(userId) && isAdmin();
+      allow delete: if isValidId(userId) && (
+        isAdmin() || hasValidStaffOp('admins', userId, 'admin')
+      );
     }
 
-    // Reviewer role elevation protected by double-hashed cryptographic proof
     match /reviewers/{userId} {
       allow get: if isValidId(userId) && (isCurrentUser(userId) || isAdmin());
       allow list: if isAdmin();
       allow create, update: if isValidId(userId) && (
         isAdmin() ||
+        hasValidStaffOp('reviewers', userId, 'admin') ||
         (isCurrentUser(userId) && validReviewerProof())
       );
-      allow delete: if isValidId(userId) && isAdmin();
+      allow delete: if isValidId(userId) && (
+        isAdmin() || hasValidStaffOp('reviewers', userId, 'admin')
+      );
     }
 
-    // Users Collection: students cannot escalate roles or inflate points beyond mission claims
+    // Users Collection (PII-free school profiles)
     match /users/{userId} {
-      allow get: if isValidId(userId) && (isCurrentUser(userId) || isSignedIn());
-      allow list: if isSignedIn();
+      allow read: if true;
 
-      allow create: if isValidId(userId) && isCurrentUser(userId) && (
+      allow create: if isValidId(userId) && (
         isAdmin() ||
+        hasValidStaffOp('users', userId, 'admin') ||
         (
+          incoming().uid == userId &&
+          incoming().role == 'reviewer' &&
+          hasValidStaffOp('users', userId, 'reviewer')
+        ) ||
+        (
+          (isCurrentUser(userId) || userId.matches('^stu_[a-zA-Z0-9_\\-]+$')) &&
           incoming().uid == userId &&
           incoming().role == 'student' &&
           incoming().balance == 0 &&
           incoming().totalEarned == 0 &&
           incoming().totalPieces == 0 &&
           incoming().get('disabled', false) == false
-        ) ||
-        (
-          incoming().uid == userId &&
-          incoming().role == 'admin' &&
-          exists(/databases/$(database)/documents/admins/$(userId))
-        ) ||
-        (
-          incoming().uid == userId &&
-          incoming().role == 'reviewer' &&
-          exists(/databases/$(database)/documents/reviewers/$(userId))
         )
       );
 
       allow update: if isValidId(userId) && (
         isAdmin() ||
+        hasValidStaffOp('users', userId, 'admin') ||
         (
-          isReviewer() &&
+          (isReviewer() || hasValidStaffOp('users', userId, 'reviewer')) &&
           incoming().diff(existing()).affectedKeys().hasOnly([
             'balance', 'totalEarned', 'totalPieces', 'certificateEarned', 'updatedAt'
           ])
         ) ||
         (
-          isCurrentUser(userId) &&
+          (isCurrentUser(userId) || (userId.matches('^stu_[a-zA-Z0-9_\\-]+$') && existing().role == 'student')) &&
           incoming().get('disabled', false) == existing().get('disabled', false) &&
+          incoming().role == existing().role &&
           (
-            // Authorized staff role sync only when membership doc already exists
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'className', 'number', 'studentId', 'avatar', 'profileCompleted', 'updatedAt'
+            ]) ||
             (
-              incoming().role == 'admin' &&
-              exists(/databases/$(database)/documents/admins/$(userId))
+              incoming().diff(existing()).affectedKeys().hasOnly(['balance']) &&
+              incoming().balance >= 0 &&
+              incoming().balance < existing().balance
             ) ||
             (
-              incoming().role == 'reviewer' &&
-              exists(/databases/$(database)/documents/reviewers/$(userId))
-            ) ||
-            (
-              incoming().role == existing().role &&
-              (
-                // Profile details update (cannot touch balance/totalEarned/role/disabled)
-                incoming().diff(existing()).affectedKeys().hasOnly([
-                  'name', 'className', 'number', 'studentId', 'avatar', 'profileCompleted', 'updatedAt'
-                ]) ||
-                // Reward redemption balance deduction
-                (
-                  incoming().diff(existing()).affectedKeys().hasOnly(['balance']) &&
-                  incoming().balance >= 0 &&
-                  incoming().balance < existing().balance
-                ) ||
-                // Daily mission bonus claim (strictly bounded per claim)
-                (
-                  incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'totalEarned']) &&
-                  incoming().balance > existing().balance &&
-                  incoming().balance <= existing().balance + 20 &&
-                  incoming().totalEarned > existing().totalEarned &&
-                  incoming().totalEarned <= existing().totalEarned + 20
-                )
-              )
+              incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'totalEarned']) &&
+              incoming().balance > existing().balance &&
+              incoming().balance <= existing().balance + 20 &&
+              incoming().totalEarned > existing().totalEarned &&
+              incoming().totalEarned <= existing().totalEarned + 20
             )
           )
         )
       );
 
-      allow delete: if isValidId(userId) && isAdmin();
+      allow delete: if isValidId(userId) && (isAdmin() || hasValidStaffOp('users', userId, 'admin'));
     }
 
     // Locations Collection
     match /locations/{locationId} {
-      allow read: if isSignedIn();
-      allow write: if isValidId(locationId) && isAdmin();
+      allow read: if true;
+      allow create, update, delete: if isValidId(locationId) && (
+        isAdmin() || hasValidStaffOp('locations', locationId, 'admin')
+      );
     }
 
     // Submissions Collection
     match /submissions/{submissionId} {
-      allow get: if isValidId(submissionId) && isSignedIn() && (
-        existing().userId == request.auth.uid || isReviewer()
-      );
-      allow list: if isSignedIn() && (
-        resource.data.userId == request.auth.uid || isReviewer()
-      );
-      allow create: if isValidId(submissionId) && isSignedIn() &&
-        incoming().userId == request.auth.uid &&
+      allow read: if true;
+      allow create: if isValidId(submissionId) &&
         incoming().status == 'pending' &&
-        incoming().points == 0;
-      allow update: if isValidId(submissionId) && isReviewer();
-      allow delete: if isValidId(submissionId) && isAdmin();
+        incoming().points == 0 &&
+        (
+          (isSignedIn() && incoming().userId == request.auth.uid) ||
+          incoming().userId.matches('^(stu|staff)_[a-zA-Z0-9_\\-]+$')
+        );
+      allow update: if isValidId(submissionId) && (
+        isReviewer() || hasValidStaffOp('submissions', submissionId, 'reviewer')
+      );
+      allow delete: if isValidId(submissionId) && (
+        isAdmin() || hasValidStaffOp('submissions', submissionId, 'admin')
+      );
     }
 
     // Rewards Collection
     match /rewards/{rewardId} {
-      allow read: if isSignedIn();
-      allow create, delete: if isValidId(rewardId) && isAdmin();
+      allow read: if true;
+      allow create, delete: if isValidId(rewardId) && (
+        isAdmin() || hasValidStaffOp('rewards', rewardId, 'admin')
+      );
       allow update: if isValidId(rewardId) && (
         isAdmin() ||
+        hasValidStaffOp('rewards', rewardId, 'admin') ||
         (
-          isSignedIn() &&
           incoming().diff(existing()).affectedKeys().hasOnly(['stock']) &&
           incoming().stock >= 0 &&
           incoming().stock == existing().stock - 1
@@ -234,53 +264,55 @@ service cloud.firestore {
 
     // Redemptions Collection
     match /redemptions/{redemptionId} {
-      allow get: if isValidId(redemptionId) && isSignedIn() && (
-        existing().userId == request.auth.uid || isReviewer()
-      );
-      allow list: if isSignedIn() && (
-        resource.data.userId == request.auth.uid || isReviewer()
-      );
-      allow create: if isValidId(redemptionId) && isSignedIn() &&
-        incoming().userId == request.auth.uid &&
+      allow read: if true;
+      allow create: if isValidId(redemptionId) &&
         incoming().status == 'pending' &&
-        incoming().cost > 0;
-      allow update: if isValidId(redemptionId) && isReviewer();
-      allow delete: if isValidId(redemptionId) && isAdmin();
+        incoming().cost > 0 &&
+        (
+          (isSignedIn() && incoming().userId == request.auth.uid) ||
+          incoming().userId.matches('^(stu|staff)_[a-zA-Z0-9_\\-]+$')
+        );
+      allow update: if isValidId(redemptionId) && (
+        isReviewer() || hasValidStaffOp('redemptions', redemptionId, 'reviewer')
+      );
+      allow delete: if isValidId(redemptionId) && (
+        isAdmin() || hasValidStaffOp('redemptions', redemptionId, 'admin')
+      );
     }
 
     // Missions Collection
     match /missions/{missionId} {
-      allow read: if isSignedIn();
-      allow write: if isValidId(missionId) && isAdmin();
+      allow read: if true;
+      allow create, update, delete: if isValidId(missionId) && (
+        isAdmin() || hasValidStaffOp('missions', missionId, 'admin')
+      );
     }
 
     // Notifications Collection
     match /notifications/{notificationId} {
-      allow get: if isValidId(notificationId) && isSignedIn() && (
-        existing().userId == request.auth.uid ||
-        existing().userId == 'all' ||
-        isReviewer()
+      allow read: if true;
+      allow create: if isValidId(notificationId) && (
+        isReviewer() || hasValidStaffOp('notifications', notificationId, 'reviewer')
       );
-      allow list: if isSignedIn() && (
-        resource.data.userId == request.auth.uid ||
-        resource.data.userId == 'all' ||
-        isReviewer()
-      );
-      allow create: if isValidId(notificationId) && isReviewer();
-      allow update: if isValidId(notificationId) && isSignedIn() && (
+      allow update: if isValidId(notificationId) && (
         isReviewer() ||
+        hasValidStaffOp('notifications', notificationId, 'reviewer') ||
         (
-          existing().userId == request.auth.uid &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['read'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['read']) &&
+          incoming().read == true
         )
       );
-      allow delete: if isValidId(notificationId) && isAdmin();
+      allow delete: if isValidId(notificationId) && (
+        isAdmin() || hasValidStaffOp('notifications', notificationId, 'admin')
+      );
     }
 
     // Settings Collection
     match /settings/{settingId} {
-      allow read: if isSignedIn();
-      allow write: if isValidId(settingId) && isAdmin();
+      allow read: if true;
+      allow create, update, delete: if isValidId(settingId) && (
+        isAdmin() || hasValidStaffOp('settings', settingId, 'admin')
+      );
     }
   }
 }

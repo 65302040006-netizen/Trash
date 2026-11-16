@@ -36,12 +36,16 @@ import {
   collection,
   doc,
   getDoc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
+  writeBatch,
   onSnapshot,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import {
+  staffSetDoc,
+  staffUpdateDoc,
+  staffDeleteDoc,
+  attachStaffOpToBatch,
+} from '../firebase/staffWrite';
 import { QRCodeModal } from '../components/QRCodeModal';
 import {
   INITIAL_VERIFY_HASHES,
@@ -58,7 +62,7 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) => {
-  const { settings } = useAuth();
+  const { settings, staffSession, updateStaffSessionProof } = useAuth();
 
   // Statistics State
   const [stats, setStats] = useState({
@@ -200,13 +204,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
     };
   }, []);
 
-  // Save Announcement (uses setDoc merge so it never fails if doc doesn't exist yet)
+  // Save Announcement
   const handleSaveAnnouncement = async () => {
     setSavingAnnouncement(true);
     setAnnouncementSavedSuccess(false);
     try {
-      await setDoc(
-        doc(db, 'settings', 'app_config'),
+      await staffSetDoc(
+        'settings',
+        'app_config',
         {
           generalMin: Number(ruleGeneralMin),
           generalPerPiece: Number(ruleGeneralPerPiece),
@@ -217,6 +222,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
           maxPiecesPerSubmit: Number(ruleMaxPieces),
           announcement: announcementText.trim(),
         },
+        staffSession,
         { merge: true }
       );
       setAnnouncementSavedSuccess(true);
@@ -248,7 +254,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
         announcement: announcementText.trim(),
       };
 
-      await setDoc(doc(db, 'settings', 'app_config'), updated, { merge: true });
+      await staffSetDoc(
+        'settings',
+        'app_config',
+        updated as unknown as Record<string, unknown>,
+        staffSession,
+        { merge: true }
+      );
       setSettingsSavedSuccess(true);
       showBanner('success', 'บันทึกกติกาคะแนนเรียบร้อยแล้ว');
       setTimeout(() => setSettingsSavedSuccess(false), 2500);
@@ -269,14 +281,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
       const locId = `loc_${Date.now()}`;
       const qrCodeVal = `TRASH_LOC_${Date.now().toString(36).toUpperCase()}`;
 
-      await setDoc(doc(db, 'locations', locId), {
-        id: locId,
-        name: newLocName.trim(),
-        description: newLocDesc.trim(),
-        qrCode: qrCodeVal,
-        active: true,
-        createdAt: new Date().toISOString(),
-      });
+      await staffSetDoc(
+        'locations',
+        locId,
+        {
+          id: locId,
+          name: newLocName.trim(),
+          description: newLocDesc.trim(),
+          qrCode: qrCodeVal,
+          active: true,
+          createdAt: new Date().toISOString(),
+        },
+        staffSession
+      );
 
       setNewLocName('');
       setNewLocDesc('');
@@ -292,7 +309,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
   // Delete Location
   const handleDeleteLocation = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'locations', id));
+      await staffDeleteDoc('locations', id, staffSession);
       setConfirmDeleteLocId(null);
       showBanner('success', 'ลบจุดทิ้งขยะแล้ว');
     } catch (err) {
@@ -308,16 +325,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
     setSavingReward(true);
     try {
       const rewardId = `rew_${Date.now()}`;
-      await setDoc(doc(db, 'rewards', rewardId), {
-        id: rewardId,
-        name: newRewardName.trim(),
-        category: newRewardCategory,
-        icon: 'gift',
-        cost: Number(newRewardCost),
-        stock: Number(newRewardStock),
-        month: 'ประจำเดือน',
-        active: true,
-      });
+      await staffSetDoc(
+        'rewards',
+        rewardId,
+        {
+          id: rewardId,
+          name: newRewardName.trim(),
+          category: newRewardCategory,
+          icon: 'gift',
+          cost: Number(newRewardCost),
+          stock: Number(newRewardStock),
+          month: 'ประจำเดือน',
+          active: true,
+        },
+        staffSession
+      );
       setNewRewardName('');
       setNewRewardCost(20);
       setNewRewardStock(30);
@@ -333,9 +355,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
   // Update Reward Stock
   const handleUpdateStock = async (id: string, newStock: number) => {
     try {
-      await updateDoc(doc(db, 'rewards', id), {
-        stock: Math.max(0, newStock),
-      });
+      await staffUpdateDoc(
+        'rewards',
+        id,
+        { stock: Math.max(0, newStock) },
+        staffSession
+      );
       showBanner('success', 'อัปเดตสต็อกของรางวัลแล้ว');
     } catch (err) {
       console.error('Update stock error:', err);
@@ -346,7 +371,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
   // Delete Reward
   const handleDeleteReward = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'rewards', id));
+      await staffDeleteDoc('rewards', id, staffSession);
       setConfirmDeleteRewardId(null);
       showBanner('success', 'ลบของรางวัลเรียบร้อยแล้ว');
     } catch (err) {
@@ -355,20 +380,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
     }
   };
 
-  // Update User Role (and sync admins/reviewers RBAC docs cleanly)
+  // Update User Role
   const handleUpdateUserRole = async (userId: string, newRole: 'student' | 'reviewer' | 'admin') => {
     try {
       const now = new Date().toISOString();
-      await updateDoc(doc(db, 'users', userId), { role: newRole, updatedAt: now });
-      if (newRole === 'admin') {
-        await setDoc(doc(db, 'admins', userId), { active: true, updatedAt: now }, { merge: true });
-      } else if (newRole === 'reviewer') {
-        await setDoc(doc(db, 'reviewers', userId), { active: true, updatedAt: now }, { merge: true });
-        await deleteDoc(doc(db, 'admins', userId)).catch(() => {});
-      } else {
-        await deleteDoc(doc(db, 'admins', userId)).catch(() => {});
-        await deleteDoc(doc(db, 'reviewers', userId)).catch(() => {});
-      }
+      await staffUpdateDoc('users', userId, { role: newRole, updatedAt: now }, staffSession);
       showBanner('success', 'อัปเดตสิทธิ์ผู้ใช้เรียบร้อยแล้ว');
     } catch (err) {
       console.error('Update role error:', err);
@@ -379,10 +395,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
   // Toggle user disabled status
   const handleToggleUserDisabled = async (userId: string, currentDisabled?: boolean) => {
     try {
-      await updateDoc(doc(db, 'users', userId), {
-        disabled: !currentDisabled,
-        updatedAt: new Date().toISOString(),
-      });
+      await staffUpdateDoc(
+        'users',
+        userId,
+        {
+          disabled: !currentDisabled,
+          updatedAt: new Date().toISOString(),
+        },
+        staffSession
+      );
       showBanner('success', !currentDisabled ? 'ระงับบัญชีเรียบร้อยแล้ว' : 'ปลดการระงับบัญชีแล้ว');
     } catch (err) {
       console.error('Toggle disabled error:', err);
@@ -418,7 +439,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
 
     setSavingSec(true);
     try {
-      // Load existing hashes so unmodified credential slots remain intact
       const secDocRef = doc(db, 'staff_security', 'hashes');
       const secSnap = await getDoc(secDocRef);
       const existingData = secSnap.exists()
@@ -449,7 +469,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
         updatedAt: new Date().toISOString(),
       };
 
-      // Initialize any un-rotated slots on private_security with initial rule hashes
       if (!rotatedSlots.adminCred) {
         proofUpdate.adminCredProofHash = INITIAL_PROOF_RULE_HASHES.adminCredProofHash;
       }
@@ -481,8 +500,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToHome }) 
         rotatedSlots.revPin = true;
       }
 
-      await setDoc(secDocRef, nextVerifyHashes, { merge: true });
-      await setDoc(doc(db, 'private_security', 'staff_proofs'), proofUpdate, { merge: true });
+      const batch = writeBatch(db);
+      batch.set(secDocRef, nextVerifyHashes, { merge: true });
+      batch.set(doc(db, 'private_security', 'staff_proofs'), proofUpdate, { merge: true });
+      if (staffSession) {
+        attachStaffOpToBatch(batch, 'staff_security', 'hashes', staffSession);
+        attachStaffOpToBatch(batch, 'private_security', 'staff_proofs', staffSession);
+      }
+      await batch.commit();
+
+      if (secTargetRole === 'admin') {
+        updateStaffSessionProof(newProofSecret);
+      }
 
       setSecUsername('');
       setSecPassword('');
