@@ -15,8 +15,6 @@ import {
   Lock,
   User as UserIcon,
   ChevronRight,
-  LogOut,
-  CheckCircle2,
   Eye,
   EyeOff,
 } from 'lucide-react';
@@ -29,15 +27,7 @@ const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_SECONDS = 30;
 
 export const AuthModal: React.FC<AuthModalProps> = () => {
-  const {
-    user,
-    needsStudentRegistration,
-    loginWithGoogle,
-    completeStudentRegistration,
-    loginStudentDirectly,
-    loginAsStaff,
-    logout,
-  } = useAuth();
+  const { loginStudentDirectly, loginAsStaff } = useAuth();
 
   // Active Login Tab: 'student' | 'reviewer' | 'admin'
   const [activeTab, setActiveTab] = useState<'student' | 'reviewer' | 'admin'>('student');
@@ -64,13 +54,6 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
   const [staffUsername, setStaffUsername] = useState('');
   const [staffPassword, setStaffPassword] = useState('');
   const [staffPin, setStaffPin] = useState('');
-
-  // Sync displayName if signed in via Google
-  useEffect(() => {
-    if (user?.displayName && !name) {
-      setName(user.displayName);
-    }
-  }, [user?.displayName, name]);
 
   // Countdown lockout ticker
   useEffect(() => {
@@ -102,28 +85,10 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
     setStaffUsername('');
     setStaffPassword('');
     setStaffPin('');
-    // Both PIN and Username/Password are supported cleanly
     setStaffAuthType(tab === 'admin' ? 'credentials' : 'pin');
   };
 
-  // Optional Google Sign In (Students)
-  const handleGoogleSignIn = async () => {
-    if (!acceptedConsent) {
-      setErrorMsg('กรุณากดยินยอมข้อตกลงความเป็นส่วนตัวก่อนเข้าสู่ระบบ');
-      return;
-    }
-    setErrorMsg('');
-    setLoading(true);
-    try {
-      await loginWithGoogle();
-    } catch {
-      setErrorMsg('ไม่สามารถเข้าสู่ระบบด้วย Google ในอุปกรณ์นี้ได้ สามารถกรอกข้อมูลนักเรียนด้านล่างเพื่อเข้าใช้งานได้ทันที');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Student registration / direct login submit (works with or without Google)
+  // Student Info Form Submit (No Email / No Google needed)
   const handleStudentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
@@ -138,18 +103,13 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
     setErrorMsg('');
     setLoading(true);
     try {
-      const payload = {
+      await loginStudentDirectly({
         name: name.trim(),
         className: className.trim(),
         number: number.trim(),
         studentId: studentId.trim(),
         avatar: selectedAvatar,
-      };
-      if (user && needsStudentRegistration) {
-        await completeStudentRegistration(payload);
-      } else {
-        await loginStudentDirectly(payload);
-      }
+      });
     } catch (err) {
       console.error('Student login error:', err);
       setErrorMsg(
@@ -162,7 +122,7 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
     }
   };
 
-  // Direct Staff (Admin / Reviewer) Login — NO Google/Email popup needed!
+  // Direct Staff (Admin / Reviewer) Login
   const handleStaffSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (activeTab === 'student') return;
@@ -287,65 +247,18 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
           </button>
         </div>
 
-        {/* TAB 1: STUDENT LOGIN */}
+        {/* TAB 1: STUDENT FORM LOGIN */}
         {activeTab === 'student' && (
-          <div className="space-y-3.5 text-left">
-            {user && needsStudentRegistration ? (
-              <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-200 flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-900">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>เชื่อมต่อ Google แล้ว • กรอกข้อมูลนักเรียน</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="text-[10px] text-slate-500 hover:text-red-600 flex items-center gap-0.5"
-                >
-                  <LogOut className="w-3 h-3" />
-                  <span>ออก</span>
-                </button>
+          <div className="space-y-3 text-left">
+            <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-200 text-emerald-950">
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <UserCheck className="w-4 h-4 text-emerald-700" />
+                <span className="font-bold text-xs">เข้าสู่ระบบสำหรับนักเรียน</span>
               </div>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  onClick={handleGoogleSignIn}
-                  disabled={loading}
-                  className="w-full py-2.5 px-4 rounded-2xl bg-white hover:bg-slate-50 border-2 border-emerald-500 text-slate-800 font-bold text-xs flex items-center justify-center gap-2.5 shadow-xs transition active:scale-98 disabled:opacity-60"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
-                    <path
-                      fill="#4285F4"
-                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                    />
-                    <path
-                      fill="#EA4335"
-                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                    />
-                  </svg>
-                  <span>เข้าสู่ระบบด้วยบัญชี Google</span>
-                </button>
-
-                <div className="relative my-1.5">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-slate-200"></div>
-                  </div>
-                  <div className="relative flex justify-center text-[10px]">
-                    <span className="bg-white px-2 text-slate-400 font-semibold">
-                      หรือ กรอกข้อมูลนักเรียน (ไม่ต้องใช้อีเมล)
-                    </span>
-                  </div>
-                </div>
-              </>
-            )}
+              <p className="text-[11px] text-emerald-800 leading-relaxed">
+                กรอกข้อมูลนักเรียนเพื่อเข้าใช้งานและสะสมคะแนนได้ทันที (ไม่ต้องใช้อีเมล)
+              </p>
+            </div>
 
             <form onSubmit={handleStudentSubmit} className="space-y-2.5">
               <div>
@@ -458,7 +371,7 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
           </div>
         )}
 
-        {/* TAB 2 & 3: REVIEWER & ADMIN LOGIN (DIRECT PIN / CREDENTIALS, NO EMAIL NEEDED) */}
+        {/* TAB 2 & 3: REVIEWER & ADMIN LOGIN */}
         {isStaffTab && (
           <div className="space-y-3.5 text-left">
             <div

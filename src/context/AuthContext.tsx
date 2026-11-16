@@ -4,13 +4,7 @@
  */
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import {
-  User,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signOut as firebaseSignOut,
-  onAuthStateChanged,
-} from 'firebase/auth';
+import { signOut as firebaseSignOut } from 'firebase/auth';
 import {
   doc,
   getDoc,
@@ -50,15 +44,11 @@ export interface StaffLoginResult {
 }
 
 export interface AuthContextType {
-  user: User | null;
   profile: UserProfile | null;
   role: UserRole;
   loading: boolean;
-  needsStudentRegistration: boolean;
   staffSession: StaffAuthSession | null;
   settings: AppSettings;
-  loginWithGoogle: () => Promise<void>;
-  completeStudentRegistration: (data: StudentFormData) => Promise<void>;
   loginStudentDirectly: (data: StudentFormData) => Promise<void>;
   loginAsStaff: (
     roleTarget: 'admin' | 'reviewer',
@@ -106,11 +96,9 @@ function getOrCreateStudentUid(studentId?: string): string {
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [role, setRole] = useState<UserRole>('student');
   const [loading, setLoading] = useState<boolean>(true);
-  const [needsStudentRegistration, setNeedsStudentRegistration] = useState<boolean>(false);
   const [staffSession, setStaffSession] = useState<StaffAuthSession | null>(() => loadStaffSession());
   const [activeLocalUid, setActiveLocalUid] = useState<string | null>(() => {
     const s = loadStaffSession();
@@ -140,186 +128,80 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsub();
   }, []);
 
-  // Listen to Firebase Auth State (for Google users) AND restore local/staff sessions
+  // Restore saved Staff or Student session and subscribe to user profile
   useEffect(() => {
-    let unsubProfile: (() => void) | null = null;
+    const savedStaff = loadStaffSession();
+    const targetUid = savedStaff?.uid || activeLocalUid;
 
-    const subscribeToUserDoc = (uid: string, fallbackStaffRole?: 'admin' | 'reviewer') => {
-      if (unsubProfile) {
-        unsubProfile();
-        unsubProfile = null;
-      }
-
-      const userDocRef = doc(db, 'users', uid);
-      unsubProfile = onSnapshot(
-        userDocRef,
-        (docSnap) => {
-          if (docSnap.exists()) {
-            const userData = docSnap.data() as UserProfile;
-            if (userData.disabled) {
-              setProfile(null);
-              setRole('student');
-              setNeedsStudentRegistration(false);
-              setLoading(false);
-              return;
-            }
-            if (userData.profileCompleted === false && !fallbackStaffRole) {
-              setProfile(null);
-              setNeedsStudentRegistration(true);
-            } else {
-              const resolvedRole: UserRole =
-                fallbackStaffRole || userData.role || 'student';
-              setProfile({ ...userData, uid: docSnap.id, role: resolvedRole });
-              setRole(resolvedRole);
-              setNeedsStudentRegistration(false);
-            }
-          } else if (fallbackStaffRole) {
-            const fallbackProf: UserProfile = {
-              uid,
-              name:
-                fallbackStaffRole === 'admin'
-                  ? 'ผู้ดูแลระบบโรงเรียน'
-                  : 'ครูผู้ตรวจหลักฐาน',
-              className:
-                fallbackStaffRole === 'admin'
-                  ? 'ฝ่ายผู้ดูแลระบบ'
-                  : 'คณะกรรมการสิ่งแวดล้อม',
-              number: '1',
-              studentId: fallbackStaffRole === 'admin' ? 'ADMIN' : 'STAFF',
-              avatar: 'avatar_3',
-              role: fallbackStaffRole,
-              totalEarned: 0,
-              balance: 0,
-              totalPieces: 0,
-              certificateEarned: false,
-              profileCompleted: true,
-              createdAt: new Date().toISOString(),
-            };
-            setProfile(fallbackProf);
-            setRole(fallbackStaffRole);
-            setNeedsStudentRegistration(false);
-          } else if (auth.currentUser) {
-            setProfile(null);
-            setRole('student');
-            setNeedsStudentRegistration(true);
-          } else {
-            // Stale local student ID not found in Firestore -> show login form
-            setProfile(null);
-            setRole('student');
-            setNeedsStudentRegistration(false);
-          }
-          setLoading(false);
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.GET, `users/${uid}`);
-          setLoading(false);
-        }
-      );
-    };
-
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
-      const savedStaff = loadStaffSession();
-
-      if (savedStaff) {
-        setStaffSession(savedStaff);
-        subscribeToUserDoc(savedStaff.uid, savedStaff.role);
-        return;
-      }
-
-      if (firebaseUser) {
-        subscribeToUserDoc(firebaseUser.uid);
-        return;
-      }
-
-      if (activeLocalUid) {
-        subscribeToUserDoc(activeLocalUid);
-        return;
-      }
-
-      if (unsubProfile) {
-        unsubProfile();
-        unsubProfile = null;
-      }
+    if (!targetUid) {
       setProfile(null);
       setRole('student');
-      setNeedsStudentRegistration(false);
       setLoading(false);
-    });
+      return;
+    }
+
+    if (savedStaff) {
+      setStaffSession(savedStaff);
+    }
+
+    const userDocRef = doc(db, 'users', targetUid);
+    const unsubProfile = onSnapshot(
+      userDocRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const userData = docSnap.data() as UserProfile;
+          if (userData.disabled) {
+            setProfile(null);
+            setRole('student');
+            setLoading(false);
+            return;
+          }
+          const resolvedRole: UserRole =
+            savedStaff?.role || userData.role || 'student';
+          setProfile({ ...userData, uid: docSnap.id, role: resolvedRole });
+          setRole(resolvedRole);
+        } else if (savedStaff) {
+          const fallbackProf: UserProfile = {
+            uid: savedStaff.uid,
+            name:
+              savedStaff.role === 'admin'
+                ? 'ผู้ดูแลระบบโรงเรียน'
+                : 'ครูผู้ตรวจหลักฐาน',
+            className:
+              savedStaff.role === 'admin'
+                ? 'ฝ่ายผู้ดูแลระบบ'
+                : 'คณะกรรมการสิ่งแวดล้อม',
+            number: '1',
+            studentId: savedStaff.role === 'admin' ? 'ADMIN' : 'STAFF',
+            avatar: 'avatar_3',
+            role: savedStaff.role,
+            totalEarned: 0,
+            balance: 0,
+            totalPieces: 0,
+            certificateEarned: false,
+            profileCompleted: true,
+            createdAt: new Date().toISOString(),
+          };
+          setProfile(fallbackProf);
+          setRole(savedStaff.role);
+        } else {
+          setProfile(null);
+          setRole('student');
+        }
+        setLoading(false);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.GET, `users/${targetUid}`);
+        setLoading(false);
+      }
+    );
 
     return () => {
-      unsubscribe();
-      if (unsubProfile) unsubProfile();
+      unsubProfile();
     };
   }, [activeLocalUid]);
 
-  const loginWithGoogle = async () => {
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: 'select_account' });
-    await signInWithPopup(auth, provider);
-  };
-
-  const completeStudentRegistration = async (data: StudentFormData): Promise<void> => {
-    const currentAuthUser = auth.currentUser;
-    if (!currentAuthUser) {
-      throw new Error('กรุณาเข้าสู่ระบบด้วยบัญชี Google ก่อนบันทึกข้อมูล');
-    }
-
-    const uid = currentAuthUser.uid;
-    const userDocRef = doc(db, 'users', uid);
-    const existingSnap = await getDoc(userDocRef);
-
-    let finalProfile: UserProfile;
-    if (existingSnap.exists()) {
-      const existing = existingSnap.data() as UserProfile;
-      finalProfile = {
-        ...existing,
-        name: data.name.trim(),
-        className: data.className.trim(),
-        number: data.number.trim(),
-        studentId: data.studentId?.trim() || existing.studentId || '',
-        avatar: data.avatar,
-        role: 'student',
-        profileCompleted: true,
-        updatedAt: new Date().toISOString(),
-      };
-      await updateDoc(userDocRef, {
-        name: finalProfile.name,
-        className: finalProfile.className,
-        number: finalProfile.number,
-        studentId: finalProfile.studentId,
-        avatar: finalProfile.avatar,
-        profileCompleted: true,
-        updatedAt: finalProfile.updatedAt,
-      });
-    } else {
-      finalProfile = {
-        uid,
-        name: data.name.trim(),
-        className: data.className.trim(),
-        number: data.number.trim(),
-        studentId: data.studentId?.trim() || '',
-        avatar: data.avatar,
-        role: 'student',
-        totalEarned: 0,
-        balance: 0,
-        totalPieces: 0,
-        certificateEarned: false,
-        disabled: false,
-        profileCompleted: true,
-        createdAt: new Date().toISOString(),
-      };
-      await setDoc(userDocRef, finalProfile);
-    }
-
-    setStaffSession(null);
-    saveStaffSession(null);
-    setProfile(finalProfile);
-    setRole('student');
-    setNeedsStudentRegistration(false);
-  };
-
-  // Email-free student sign-in / registration (for GitHub Pages / mobile WebView / non-Google users)
+  // Student Sign-in / Profile Registration (No Email / No Google needed)
   const loginStudentDirectly = async (data: StudentFormData): Promise<void> => {
     const uid = getOrCreateStudentUid(data.studentId);
     const userDocRef = doc(db, 'users', uid);
@@ -378,7 +260,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setActiveLocalUid(uid);
     setProfile(finalProfile);
     setRole('student');
-    setNeedsStudentRegistration(false);
   };
 
   // Direct Email-free Staff Login (Admin & Reviewer) via PIN or Username+Password
@@ -475,7 +356,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setActiveLocalUid(staffUid);
       setProfile(staffProf);
       setRole(roleTarget);
-      setNeedsStudentRegistration(false);
 
       if (roleTarget === 'admin') {
         await initializeSeedData(session);
@@ -501,7 +381,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateProfileData = async (data: Partial<UserProfile>) => {
-    const targetUid = profile?.uid || user?.uid;
+    const targetUid = profile?.uid;
     setProfile((prev) => (prev ? { ...prev, ...data } : null));
     if (targetUid) {
       const updatePayload: Record<string, unknown> = {
@@ -537,17 +417,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (auth.currentUser) {
         await firebaseSignOut(auth);
       }
-    } catch (err) {
-      console.error('Logout error:', err);
+    } catch {
+      // Ignore Firebase sign-out cleanup if none active
     }
-    setUser(null);
     setProfile(null);
     setRole('student');
-    setNeedsStudentRegistration(false);
   };
 
   const refreshProfile = async () => {
-    const targetUid = profile?.uid || user?.uid;
+    const targetUid = profile?.uid;
     if (!targetUid) return;
     try {
       const snap = await getDoc(doc(db, 'users', targetUid));
@@ -562,15 +440,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   return (
     <AuthContext.Provider
       value={{
-        user,
         profile,
         role,
         loading,
-        needsStudentRegistration,
         staffSession,
         settings,
-        loginWithGoogle,
-        completeStudentRegistration,
         loginStudentDirectly,
         loginAsStaff,
         updateStaffSessionProof,
